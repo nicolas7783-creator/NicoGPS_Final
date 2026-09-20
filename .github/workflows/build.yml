@@ -1,4 +1,4 @@
-name: Construire NicoGPS 3.1
+name: Construire NicoGPS 4.0
 
 on: [push, workflow_dispatch]
 
@@ -13,7 +13,7 @@ jobs:
       - name: Préparer le projet Android
         run: |
           rm -rf source
-          unzip -q NicoGPS2_source.zip -d source
+          unzip -q NicoGPS4_source.zip -d source
           cp -r source/NicoGPS2/. .
 
       - name: Installer Java 17
@@ -27,12 +27,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Construire NicoGPS 3.1
+      - name: Construire NicoGPS 4.0
         run: |
           gradle assembleDebug --no-daemon
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-3.1-debug
+          name: NicoGPS-4.0-debug
           path: app/build/outputs/apk/debug/app-debug.apk
