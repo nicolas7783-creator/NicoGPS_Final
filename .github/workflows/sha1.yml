@@ -1,4 +1,4 @@
-name: Recuperer SHA-1 NicoGPS
+name: Recuperateur SHA-1 NicoGPS
 
 on:
   workflow_dispatch:
@@ -31,12 +31,10 @@ jobs:
             | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : fichier NicoGPS6.2.1_GoogleMaps_fix_build.zip introuvable."
+            echo "ERREUR : source NicoGPS introuvable."
             find . -maxdepth 5 -type f
             exit 1
           fi
-
-          echo "SOURCE TROUVEE : $ZIP"
 
           mkdir -p nicogps_source
           unzip -o "$ZIP" -d nicogps_source
@@ -55,26 +53,7 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
-
-          echo "Projet : $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Recuperer le SHA-1
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          echo "======================================"
-          echo "SHA-1 DU CERTIFICAT NICO GPS"
-          echo "======================================"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew signingReport --no-daemon
-          else
-            gradle signingReport --no-daemon
-          fi
 
       - name: Construire APK debug
         run: |
@@ -89,7 +68,7 @@ jobs:
             gradle assembleDebug --no-daemon
           fi
 
-      - name: Verifier le certificat de l APK
+      - name: Afficher le SHA-1
         run: |
           set -e
 
@@ -102,12 +81,10 @@ jobs:
             exit 1
           fi
 
-          echo "======================================"
-          echo "CERTIFICAT DE L APK REELLEMENT CONSTRUIT"
-          echo "======================================"
+          echo "=========================================="
+          echo "SHA-1 DU NICO GPS"
+          echo "=========================================="
 
           keytool -printcert -jarfile "$APK"
 
-          echo "======================================"
-          echo "FIN"
-          echo "======================================"
+          echo "=========================================="
