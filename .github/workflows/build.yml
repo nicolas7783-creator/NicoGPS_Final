@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.1 - Google Maps
+name: Construire NicoGPS 6.2.1 - Google Maps FINAL
 
 on:
   workflow_dispatch:
@@ -28,11 +28,11 @@ jobs:
           set -e
 
           ZIP=$(find . -type f \
-            -iname 'NicoGPS6.2_GoogleMaps_fix_marker.zip' \
+            -iname 'NicoGPS6.2.1_GoogleMaps_fix_build.zip' \
             | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : NicoGPS6.2_GoogleMaps_fix_marker.zip introuvable."
+            echo "ERREUR : NicoGPS6.2.1_GoogleMaps_fix_build.zip introuvable."
             echo "Fichiers disponibles :"
             find . -maxdepth 4 -type f
             exit 1
@@ -71,8 +71,6 @@ jobs:
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
 
-          echo "AndroidX configuré."
-
       - name: Vérifier la clé Google Maps
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
@@ -94,19 +92,23 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Compilation de NicoGPS 6.2.1..."
+          echo "Construction de NicoGPS 6.2.1..."
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug \
+              -PMAPS_API_KEY="$MAPS_API_KEY" \
+              --no-daemon
           else
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug \
+              -PMAPS_API_KEY="$MAPS_API_KEY" \
+              --no-daemon
           fi
 
       - name: Publier l'APK NicoGPS 6.2.1
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.1-Google-Maps
+          name: NicoGPS-6.2.1-Google-Maps-FINAL
           path: |
             ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
