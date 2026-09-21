@@ -34,7 +34,6 @@ jobs:
 
           if [ -z "$ZIP" ]; then
             echo "ERREUR : fichier NicoGPS6.2.1_GoogleMaps_fix_build.zip introuvable."
-            echo "Fichiers disponibles :"
             find . -maxdepth 5 -type f
             exit 1
           fi
@@ -107,7 +106,7 @@ jobs:
               --no-daemon
           fi
 
-      - name: Afficher le SHA-1 de l'APK
+      - name: Afficher le certificat SHA-1 de l'APK
         run: |
           set -e
 
@@ -122,8 +121,22 @@ jobs:
           echo "CERTIFICAT DE L'APK NICO GPS"
           echo "========================================"
 
-          keytool -printcert -jarfile "$APK"
+          APKSIGNER=$(find "$ANDROID_HOME" -type f \
+            -name 'apksigner' \
+            | sort -V \
+            | tail -n 1)
 
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERREUR : apksigner introuvable."
+            exit 1
+          fi
+
+          echo "Outil utilisé : $APKSIGNER"
+          echo ""
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          echo ""
           echo "========================================"
           echo "FIN DU CERTIFICAT"
           echo "========================================"
