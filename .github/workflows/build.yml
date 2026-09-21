@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Récupérer le dépôt
         uses: actions/checkout@v4
 
@@ -32,9 +33,9 @@ jobs:
             | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : NicoGPS6.2.1_GoogleMaps_fix_build.zip introuvable."
+            echo "ERREUR : fichier NicoGPS6.2.1_GoogleMaps_fix_build.zip introuvable."
             echo "Fichiers disponibles :"
-            find . -maxdepth 4 -type f
+            find . -maxdepth 5 -type f
             exit 1
           fi
 
@@ -96,6 +97,7 @@ jobs:
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
+
             ./gradlew assembleDebug \
               -PMAPS_API_KEY="$MAPS_API_KEY" \
               --no-daemon
@@ -104,6 +106,27 @@ jobs:
               -PMAPS_API_KEY="$MAPS_API_KEY" \
               --no-daemon
           fi
+
+      - name: Afficher le SHA-1 de l'APK
+        run: |
+          set -e
+
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERREUR : APK introuvable."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "CERTIFICAT DE L'APK NICO GPS"
+          echo "========================================"
+
+          keytool -printcert -jarfile "$APK"
+
+          echo "========================================"
+          echo "FIN DU CERTIFICAT"
+          echo "========================================"
 
       - name: Publier l'APK NicoGPS 6.2.1
         uses: actions/upload-artifact@v4
