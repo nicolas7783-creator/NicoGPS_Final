@@ -33,7 +33,6 @@ jobs:
 
           if [ -z "$ZIP" ]; then
             echo "ERREUR : NicoGPS6.2_GoogleMaps.zip introuvable."
-            echo "Fichiers disponibles :"
             find . -maxdepth 4 -type f
             exit 1
           fi
@@ -73,27 +72,73 @@ jobs:
 
           echo "AndroidX configuré."
 
-      - name: Configurer la clé Google Maps
+      - name: Vérifier la clé Google Maps
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
 
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : le secret GOOGLE_MAPS_API_KEY est vide."
-            echo "Ajoute la clé dans Settings > Secrets and variables > Actions."
+            echo "ERREUR : GOOGLE_MAPS_API_KEY est vide."
             exit 1
           fi
 
           echo "Clé Google Maps détectée."
 
-          find "$PROJECT_DIR/app/src/main" -type f \
-            \( -name 'AndroidManifest.xml' -o -name '*.xml' \) \
-            -print
+      - name: Corriger la configuration Google Maps
+        run: |
+          set -e
+
+          cat > "$PROJECT_DIR/app/build.gradle" <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          def mapsApiKey = System.getenv('MAPS_API_KEY') ?: ''
+
+          android {
+              namespace 'com.nicogps.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.nicogps.app'
+                  minSdk 24
+                  targetSdk 35
+                  versionCode 62
+                  versionName '6.2'
+
+                  manifestPlaceholders = [
+                      MAPS_API_KEY: mapsApiKey
+                  ]
+              }
+
+              buildFeatures {
+                  buildConfig true
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+              implementation 'com.google.android.material:material:1.12.0'
+              implementation 'com.google.android.gms:play-services-location:21.3.0'
+              implementation 'com.google.android.gms:play-services-maps:20.0.0'
+              implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+              implementation 'com.google.code.gson:gson:2.11.0'
+              implementation 'androidx.car.app:app:1.7.0'
+          }
+          EOF
+
+          echo "Configuration Google Maps corrigée."
 
       - name: Construire NicoGPS 6.2
+        env:
+          MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
+
+          echo "Compilation de NicoGPS 6.2..."
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
