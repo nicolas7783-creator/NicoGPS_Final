@@ -13,7 +13,7 @@ jobs:
       - name: Préparer le projet Android
         run: |
           rm -rf source
-          unzip -q NicoGPS6.0_source.zip -d source
+          unzip -q NicoGPS6.0_source_fixed.zip -d source
           cp -r source/NicoGPS5/. .
 
       - name: Installer Java 17
