@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.1 - Carte OSM sans API
+name: Construire NicoGPS 6.2 - Google Maps
 
 on:
   workflow_dispatch:
@@ -23,22 +23,22 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver précisément la source OSM
+      - name: Trouver la source NicoGPS 6.2
         run: |
           set -e
 
           ZIP=$(find . -type f \
-            -iname 'NicoGPS6.1_carte_route_sans_apikey.zip' \
+            -iname 'NicoGPS6.2_GoogleMaps.zip' \
             | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : NicoGPS6.1_carte_route_sans_apikey.zip introuvable."
+            echo "ERREUR : NicoGPS6.2_GoogleMaps.zip introuvable."
             echo "Fichiers disponibles :"
-            find . -maxdepth 3 -type f
+            find . -maxdepth 4 -type f
             exit 1
           fi
 
-          echo "SOURCE OSM TROUVÉE : $ZIP"
+          echo "SOURCE TROUVÉE : $ZIP"
 
           mkdir -p nicogps_source
           unzip -o "$ZIP" -d nicogps_source
@@ -73,7 +73,25 @@ jobs:
 
           echo "AndroidX configuré."
 
-      - name: Construire NicoGPS OSM
+      - name: Configurer la clé Google Maps
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -e
+
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "ERREUR : le secret GOOGLE_MAPS_API_KEY est vide."
+            echo "Ajoute la clé dans Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          echo "Clé Google Maps détectée."
+
+          find "$PROJECT_DIR/app/src/main" -type f \
+            \( -name 'AndroidManifest.xml' -o -name '*.xml' \) \
+            -print
+
+      - name: Construire NicoGPS 6.2
         run: |
           cd "$PROJECT_DIR"
 
@@ -84,10 +102,10 @@ jobs:
             gradle assembleDebug --no-daemon
           fi
 
-      - name: Publier l'APK OSM
+      - name: Publier l'APK NicoGPS 6.2
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.1-Carte-OSM-sans-API
+          name: NicoGPS-6.2-Google-Maps
           path: |
             ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
