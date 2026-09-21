@@ -18,24 +18,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Installer Gradle 8.11.1
+      - name: Installer Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: Vérifier le projet
+      - name: Trouver et décompresser le projet NicoGPS
         run: |
-          test -f settings.gradle
-          test -f app/build.gradle
-          echo "Projet NicoGPS trouvé."
+          set -e
 
-      - name: Construire NicoGPS 6.1
+          ZIP=$(find . -maxdepth 2 -type f -iname 'NicoGPS6.1*source*.zip' | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : aucun ZIP source NicoGPS 6.1 trouvé."
+            find . -maxdepth 3 -type f
+            exit 1
+          fi
+
+          echo "ZIP trouvé : $ZIP"
+
+          mkdir -p nicogps_source
+          unzip -o "$ZIP" -d nicogps_source
+
+          echo "Contenu extrait :"
+          find nicogps_source -maxdepth 4 -type f | head -100
+
+      - name: Trouver le projet Android
         run: |
-          gradle assembleDebug --no-daemon
+          set -e
 
-      - name: Publier l'APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: NicoGPS-6.1-search-fixed
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          PROJECT=$(find nicogps_source -type f -name 'settings.gradle' -o -name 'settings.gradle.kts' | head -n 1)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERREUR : aucun projet Android trouvé."
+            find nicogps_source -type f
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT")
+
+          echo "Projet trouvé dans : $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Configurer AndroidX
+        run: |
+          cd "$PROJECT_DIR"
+
+          touch gradle.properties
+
+          grep
