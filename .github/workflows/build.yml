@@ -27,11 +27,10 @@ jobs:
         run: |
           set -e
 
-          ZIP=$(find . -maxdepth 2 -type f -iname 'NicoGPS6.1*source*.zip' | head -n 1)
+          ZIP=$(find . -maxdepth 2 -type f -iname '*6.1*source*.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun ZIP source NicoGPS 6.1 trouvé."
-            find . -maxdepth 3 -type f
+            echo "ERREUR : aucun ZIP source 6.1 trouvé."
             exit 1
           fi
 
@@ -40,24 +39,25 @@ jobs:
           mkdir -p nicogps_source
           unzip -o "$ZIP" -d nicogps_source
 
-          echo "Contenu extrait :"
-          find nicogps_source -maxdepth 4 -type f | head -100
-
-      - name: Trouver le projet Android
+      - name: Définir le projet Android
         run: |
           set -e
 
-          PROJECT=$(find nicogps_source -type f -name 'settings.gradle' -o -name 'settings.gradle.kts' | head -n 1)
+          PROJECT_DIR="nicogps_source/NicoGPS5"
 
-          if [ -z "$PROJECT" ]; then
-            echo "ERREUR : aucun projet Android trouvé."
-            find nicogps_source -type f
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ]; then
+            echo "ERREUR : settings.gradle introuvable."
+            echo "Contenu du dossier :"
+            find nicogps_source -maxdepth 4 -type f
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT")
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "ERREUR : app/build.gradle introuvable."
+            exit 1
+          fi
 
-          echo "Projet trouvé dans : $PROJECT_DIR"
+          echo "Projet trouvé : $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Configurer AndroidX
@@ -80,4 +80,12 @@ jobs:
             chmod +x ./gradlew
             ./gradlew assembleDebug --no-daemon
           else
-            gradle assembleDebug --no-da
+            gradle assembleDebug --no-daemon
+          fi
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NicoGPS-6.1-search-fixed
+          path: nicogps_source/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
