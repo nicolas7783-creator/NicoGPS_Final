@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.4 Android Auto FIX3
+name: Construire NicoGPS 6.2.4 Android Auto FIX4
 
 on:
   workflow_dispatch:
@@ -22,12 +22,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et décompresser NicoGPS FIX3
+      - name: Trouver et décompresser le FIX4
         run: |
-          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX3.zip' | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX4.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP FIX3 introuvable"
+            echo "ERREUR : ZIP FIX4 introuvable"
             find . -type f -name '*.zip'
             exit 1
           fi
@@ -54,7 +54,7 @@ jobs:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : GOOGLE_MAPS_API_KEY est absente"
+            echo "ERREUR : GOOGLE_MAPS_API_KEY absente"
             exit 1
           fi
 
@@ -74,7 +74,7 @@ jobs:
           print("Clé Google Maps injectée.")
           PY
 
-      - name: Vérifier manifestPlaceholders
+      - name: Vérifier le projet
         working-directory: nicogps-build/NicoGPS5
         run: |
           if grep -R "manifestPlaceholders" app/build.gradle; then
@@ -83,6 +83,9 @@ jobs:
           fi
 
           echo "OK : manifestPlaceholders absent."
+
+          echo "Version du projet :"
+          grep "versionName" app/build.gradle
 
       - name: Construire l'APK
         working-directory: nicogps-build/NicoGPS5
@@ -114,5 +117,5 @@ jobs:
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.4-AndroidAuto-FIX3
+          name: NicoGPS-6.2.4-AndroidAuto-FIX4
           path: nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
