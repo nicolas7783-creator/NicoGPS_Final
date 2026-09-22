@@ -27,13 +27,10 @@ jobs:
         run: |
           set -e
 
-          ZIP=$(find . -type f \
-            -name 'NicoGPS_6.3.3_AndroidAuto_FINAL.zip' \
-            | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS_6.3.3_AndroidAuto_FINAL.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
             echo "ERREUR : ZIP NicoGPS 6.3.3 introuvable."
-            echo "Fichiers disponibles :"
             find . -maxdepth 4 -type f
             exit 1
           fi
@@ -41,7 +38,6 @@ jobs:
           echo "SOURCE TROUVEE : $ZIP"
 
           mkdir -p nicogps_source
-
           unzip -o "$ZIP" -d nicogps_source
 
       - name: Trouver le projet Android
@@ -54,14 +50,12 @@ jobs:
 
           if [ -z "$PROJECT" ]; then
             echo "ERREUR : projet Android introuvable."
-            find nicogps_source -maxdepth 6 -type f
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
 
           echo "Projet trouve : $PROJECT_DIR"
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Configurer AndroidX
@@ -72,11 +66,8 @@ jobs:
 
           touch gradle.properties
 
-          grep -qxF "android.useAndroidX=true" gradle.properties \
-            || echo "android.useAndroidX=true" >> gradle.properties
-
-          grep -qxF "android.enableJetifier=true" gradle.properties \
-            || echo "android.enableJetifier=true" >> gradle.properties
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
 
       - name: Verifier la cle Google Maps
         env:
@@ -91,63 +82,67 @@ jobs:
 
           echo "Cle Google Maps detectee."
 
-      - name: Configurer le placeholder Google Maps
+      - name: Injecter la cle Google Maps
+        env:
+          MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
 
           cd "$PROJECT_DIR"
 
+          MANIFEST="app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERREUR : AndroidManifest.xml introuvable."
+            exit 1
+          fi
+
           python3 - <<'PY'
-          from pathlib import Path
+          import os
+          import re
 
-          path = Path("app/build.gradle")
+          manifest = "app/src/main/AndroidManifest.xml"
+          api_key = os.environ["MAPS_API_KEY"]
 
-          content = path.read_text(encoding="utf-8")
+          with open(manifest, "r", encoding="utf-8") as f:
+              content = f.read()
 
-          marker = "manifestPlaceholders"
+          content = re.sub(
+              r'\s*<meta-data\s+android:name="com\.google\.android\.geo\.API_KEY"[^>]*/>',
+              '',
+              content
+          )
 
-          if marker in content:
-              print("manifestPlaceholders deja present.")
-          else:
-              target = """    defaultConfig {
-        applicationId 'com.nicogps.app'
-        minSdk 23
-        targetSdk 35
-        versionCode 633
-        versionName "6.3.3"
-    }"""
+          content = re.sub(
+              r'\s*<meta-data\s+android:name="com\.google\.android\.maps\.v2\.API_KEY"[^>]*/>',
+              '',
+              content
+          )
 
-              replacement = """    defaultConfig {
-        applicationId 'com.nicogps.app'
-        minSdk 23
-        targetSdk 35
-        versionCode 633
-        versionName "6.3.3"
+          meta = (
+              '        <meta-data\n'
+              '            android:name="com.google.android.geo.API_KEY"\n'
+              f'            android:value="{api_key}" />\n'
+          )
 
-        manifestPlaceholders = [
-            MAPS_API_KEY: System.getenv("MAPS_API_KEY")
-        ]
-    }"""
-
-              if target not in content:
-                  raise SystemExit(
-                      "ERREUR : bloc defaultConfig attendu introuvable."
-                  )
-
-              content = content.replace(
-                  target,
-                  replacement,
-                  1
+          if "</application>" not in content:
+              raise SystemExit(
+                  "ERREUR : balise </application> introuvable."
               )
 
-              path.write_text(content, encoding="utf-8")
+          content = content.replace(
+              "</application>",
+              meta + "    </application>",
+              1
+          )
 
-              print("Placeholder Google Maps ajoute.")
+          with open(manifest, "w", encoding="utf-8") as f:
+              f.write(content)
+
+          print("Cle Google Maps injectee dans le manifeste.")
           PY
 
       - name: Construire NicoGPS 6.3.3
-        env:
-          MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
 
@@ -164,7 +159,7 @@ jobs:
             gradle assembleDebug --no-daemon
           fi
 
-      - name: Verifier que l'APK existe
+      - name: Verifier l APK
         run: |
           set -e
 
@@ -175,10 +170,7 @@ jobs:
             exit 1
           fi
 
-          echo "=========================================="
-          echo "APK NICOGPS 6.3.3 TROUVE"
-          echo "=========================================="
-
+          echo "APK TROUVE : $APK"
           ls -lh "$APK"
 
       - name: Afficher le SHA-1
@@ -203,11 +195,7 @@ jobs:
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-          echo "=========================================="
-          echo "FIN DU DIAGNOSTIC SHA-1"
-          echo "=========================================="
-
-      - name: Publier l'APK NicoGPS 6.3.3
+      - name: Publier l APK NicoGPS 6.3.3
         uses: actions/upload-artifact@v4
         with:
           name: NicoGPS-6.3.3-AndroidAuto
