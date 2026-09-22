@@ -22,14 +22,13 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Recuperer le projet NicoGPS
+      - name: Trouver et extraire NicoGPS 6.3
         run: |
           set -e
           ZIP=$(find . -type f -name 'NicoGPS_6.3_source_AndroidAuto.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
             echo "ERREUR : ZIP NicoGPS 6.3 introuvable."
-            find . -maxdepth 3 -type f
             exit 1
           fi
 
@@ -39,69 +38,31 @@ jobs:
       - name: Trouver le projet Android
         run: |
           set -e
-
           PROJECT=$(find nicogps_source -name settings.gradle | head -n 1)
 
           if [ -z "$PROJECT" ]; then
-            echo "ERREUR : settings.gradle introuvable."
+            echo "ERREUR : projet Android introuvable."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Projet trouve : $PROJECT_DIR"
-
       - name: Configurer AndroidX
         run: |
           cd "$PROJECT_DIR"
-
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
-
-      - name: Configurer Google Maps
-        env:
-          MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-        run: |
-          set -e
-
-          if [ -z "$MAPS_API_KEY" ]; then
-            echo "ERREUR : GOOGLE_MAPS_API_KEY est vide."
-            exit 1
-          fi
-
-          cd "$PROJECT_DIR"
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path("app/build.gradle")
-          text = path.read_text()
-
-          if "manifestPlaceholders" not in text:
-              text = text.replace(
-                  "defaultConfig {",
-                  'defaultConfig {\n        manifestPlaceholders = [MAPS_API_KEY: System.getenv("MAPS_API_KEY")]',
-                  1
-              )
-
-          path.write_text(text)
-          print("Google Maps configure.")
-
-          PY
 
       - name: Construire NicoGPS 6.3
         env:
           MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
-
           cd "$PROJECT_DIR"
-
           gradle assembleDebug --no-daemon
 
-      - name: Verifier le SHA-1
+      - name: Afficher le SHA-1
         run: |
           set -e
 
@@ -111,7 +72,7 @@ jobs:
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-      - name: Publier l'APK
+      - name: Publier l'APK NicoGPS 6.3
         uses: actions/upload-artifact@v4
         with:
           name: NicoGPS-6.3
