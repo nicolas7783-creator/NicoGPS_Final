@@ -1,8 +1,7 @@
-name: Construire NicoGPS 6.3 - Google Maps + Android Auto
+name: Construire NicoGPS 6.3
 
 on:
   workflow_dispatch:
-  push:
 
 jobs:
   build:
@@ -23,22 +22,16 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver le ZIP NicoGPS 6.3
+      - name: Recuperer le projet NicoGPS
         run: |
           set -e
-
-          ZIP=$(find . -type f \
-            -iname 'NicoGPS_6.3_source_AndroidAuto.zip' \
-            | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS_6.3_source_AndroidAuto.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : NicoGPS_6.3_source_AndroidAuto.zip introuvable."
-            echo "Fichiers disponibles :"
-            find . -maxdepth 4 -type f
+            echo "ERREUR : ZIP NicoGPS 6.3 introuvable."
+            find . -maxdepth 3 -type f
             exit 1
           fi
-
-          echo "SOURCE TROUVEE : $ZIP"
 
           mkdir -p nicogps_source
           unzip -o "$ZIP" -d nicogps_source
@@ -47,85 +40,56 @@ jobs:
         run: |
           set -e
 
-          PROJECT=$(find nicogps_source -type f \
-            \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-            | head -n 1)
+          PROJECT=$(find nicogps_source -name settings.gradle | head -n 1)
 
           if [ -z "$PROJECT" ]; then
-            echo "ERREUR : projet Android introuvable."
-            find nicogps_source -maxdepth 6 -type f
+            echo "ERREUR : settings.gradle introuvable."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
           echo "Projet trouve : $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Configurer AndroidX
         run: |
           cd "$PROJECT_DIR"
 
-          touch gradle.properties
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
 
-          grep -qxF "android.useAndroidX=true" gradle.properties \
-            || echo "android.useAndroidX=true" >> gradle.properties
-
-          grep -qxF "android.enableJetifier=true" gradle.properties \
-            || echo "android.enableJetifier=true" >> gradle.properties
-
-      - name: Verifier la cle Google Maps
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-        run: |
-          set -e
-
-          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : GOOGLE_MAPS_API_KEY est vide."
-            exit 1
-          fi
-
-          echo "Cle Google Maps detectee."
-
-      - name: Configurer le placeholder Google Maps
+      - name: Configurer Google Maps
         env:
           MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
 
+          if [ -z "$MAPS_API_KEY" ]; then
+            echo "ERREUR : GOOGLE_MAPS_API_KEY est vide."
+            exit 1
+          fi
+
           cd "$PROJECT_DIR"
 
           python3 - <<'PY'
           from pathlib import Path
-          import os
+          import re
 
           path = Path("app/build.gradle")
-          content = path.read_text(encoding="utf-8")
+          text = path.read_text()
 
-          if "manifestPlaceholders" not in content:
-              content = content.replace(
+          if "manifestPlaceholders" not in text:
+              text = text.replace(
                   "defaultConfig {",
-                  """defaultConfig {
-        manifestPlaceholders = [MAPS_API_KEY: System.getenv("MAPS_API_KEY")]
-""",
+                  'defaultConfig {\n        manifestPlaceholders = [MAPS_API_KEY: System.getenv("MAPS_API_KEY")]',
                   1
               )
 
-          path.write_text(content, encoding="utf-8")
+          path.write_text(text)
+          print("Google Maps configure.")
 
-          print("Placeholder Google Maps configure.")
           PY
-
-      - name: Verifier Android Auto
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          test -f "app/src/main/res/xml/automotive_app_desc.xml"
-          test -f "app/src/main/AndroidManifest.xml"
-
-          echo "Configuration Android Auto detectee."
 
       - name: Construire NicoGPS 6.3
         env:
@@ -135,53 +99,21 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "=========================================="
-          echo "CONSTRUCTION DE NICO GPS 6.3"
-          echo "GOOGLE MAPS + ANDROID AUTO"
-          echo "=========================================="
+          gradle assembleDebug --no-daemon
 
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon
-          else
-            gradle assembleDebug --no-daemon
-          fi
-
-      - name: Verifier le SHA-1 du nouvel APK
+      - name: Verifier le SHA-1
         run: |
           set -e
 
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERREUR : APK introuvable."
-            exit 1
-          fi
-
-          echo "=========================================="
-          echo "SHA-1 DU CERTIFICAT DU NOUVEL APK"
-          echo "=========================================="
-
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
-            -name apksigner \
-            | sort -V \
-            | tail -n 1)
-
-          if [ -z "$APKSIGNER" ]; then
-            echo "ERREUR : apksigner introuvable."
-            exit 1
-          fi
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-          echo "=========================================="
-          echo "FIN DU DIAGNOSTIC"
-          echo "=========================================="
-
-      - name: Publier APK NicoGPS 6.3
+      - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.3-Google-Maps-Android-Auto
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          name: NicoGPS-6.3
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
