@@ -8,15 +8,11 @@
 
           echo "Construction de NicoGPS 6.2.1..."
 
-          # Vérifier que la clé existe sans jamais l'afficher
           if [ -z "$MAPS_API_KEY" ]; then
             echo "ERREUR : MAPS_API_KEY est vide."
             exit 1
           fi
 
-          echo "Clé Google Maps détectée."
-
-          # Injecter explicitement la clé dans le manifeste
           MANIFEST="app/src/main/AndroidManifest.xml"
 
           if [ ! -f "$MANIFEST" ]; then
@@ -26,20 +22,49 @@
 
           echo "Manifeste trouvé : $MANIFEST"
 
-          # Remplacer une éventuelle ancienne déclaration Google Maps
-          sed -i '/com.google.android.geo.API_KEY/d' "$MANIFEST"
-          sed -i '/com.google.android.maps.v2.API_KEY/d' "$MANIFEST"
+          python3 - <<'PY'
+          import os
+          import re
 
-          # Ajouter la clé Google Maps dans <application>
-          sed -i "/<application/r /dev/stdin" "$MANIFEST" <<EOF
-              <meta-data
-                  android:name="com.google.android.geo.API_KEY"
-                  android:value="$MAPS_API_KEY" />
-          EOF
+          manifest = "app/src/main/AndroidManifest.xml"
+          api_key = os.environ["MAPS_API_KEY"]
 
-          echo "Clé injectée dans AndroidManifest.xml."
+          with open(manifest, "r", encoding="utf-8") as f:
+              content = f.read()
 
-          # Construire l'APK
+          content = re.sub(
+              r'\s*<meta-data\s+android:name="com\.google\.android\.geo\.API_KEY"[^>]*/>',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*<meta-data\s+android:name="com\.google\.android\.maps\.v2\.API_KEY"[^>]*/>',
+              '',
+              content
+          )
+
+          meta = (
+              '        <meta-data\n'
+              '            android:name="com.google.android.geo.API_KEY"\n'
+              f'            android:value="{api_key}" />\n'
+          )
+
+          if "</application>" not in content:
+              raise SystemExit("ERREUR : balise </application> introuvable.")
+
+          content = content.replace(
+              "</application>",
+              meta + "    </application>",
+              1
+          )
+
+          with open(manifest, "w", encoding="utf-8") as f:
+              f.write(content)
+
+          print("Clé Google Maps injectée dans le manifeste.")
+          PY
+
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --no-daemon
