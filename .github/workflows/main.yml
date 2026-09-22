@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.4 Android Auto FIX5
+name: Construire NicoGPS 6.2.4 Android Auto FIX6
 
 on:
   workflow_dispatch:
@@ -23,22 +23,26 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et décompresser le ZIP NicoGPS
+      - name: Trouver le ZIP NicoGPS Android Auto
         shell: bash
         run: |
           set -e
 
-          echo "Recherche du ZIP NicoGPS..."
+          echo "Recherche du ZIP Android Auto..."
 
-          ZIP=$(find . -type f -iname 'NicoGPS*.zip' | head -n 1)
+          ZIP=$(find . -type f -iname 'NicoGPS_6.3.3_AndroidAuto_FINAL.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun ZIP NicoGPS trouvé."
+            ZIP=$(find . -type f -iname '*AndroidAuto*.zip' | head -n 1)
+          fi
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : aucun ZIP Android Auto trouvé."
             find . -type f -iname '*.zip' -print
             exit 1
           fi
 
-          echo "ZIP trouvé : $ZIP"
+          echo "ZIP sélectionné : $ZIP"
 
           mkdir -p nicogps-build
 
@@ -66,61 +70,6 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Corriger MainActivity.java
-        shell: bash
-        run: |
-          set -e
-
-          MAIN=$(find "$PROJECT_DIR" -type f -name 'MainActivity.java' | head -n 1)
-
-          if [ -z "$MAIN" ]; then
-            echo "ERREUR : MainActivity.java introuvable."
-            exit 1
-          fi
-
-          echo "MainActivity trouvé : $MAIN"
-
-          python3 - "$MAIN" <<'PY'
-          import sys
-          from pathlib import Path
-
-          fichier = Path(sys.argv[1])
-
-          texte = fichier.read_text(encoding="utf-8")
-
-          avant = texte
-
-          # Correction du caractère littéral \n ajouté par erreur
-          # après une instruction Java.
-          texte = texte.replace(";\\n", ";")
-
-          if texte != avant:
-              fichier.write_text(texte, encoding="utf-8")
-              print("Correction du \\n parasite effectuée.")
-          else:
-              print("Aucun \\n parasite de ce type trouvé.")
-
-          # Vérification ciblée : on ne bloque PAS les vrais \n
-          # présents dans les chaînes Java.
-          lignes = texte.splitlines()
-
-          erreurs = []
-
-          for numero, ligne in enumerate(lignes, 1):
-              if '\\n' in ligne and 'setMessage' not in ligne:
-                  if not ('"' in ligne and ligne.rfind('"') > ligne.find('\\n')):
-                      erreurs.append((numero, ligne))
-
-          if erreurs:
-              print("Attention : séquences \\n détectées :")
-              for numero, ligne in erreurs[:10]:
-                  print(f"{numero}: {ligne}")
-          else:
-              print("Aucun caractère \\n illégal détecté.")
-
-          print("MainActivity.java OK.")
-          PY
-
       - name: Activer AndroidX
         shell: bash
         run: |
@@ -138,17 +87,79 @@ jobs:
 
           echo "gradle.properties configuré."
 
-      - name: Injecter la clé Google Maps
+      - name: Vérifier et corriger Android Auto
         shell: bash
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           set -e
 
-          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : le secret GOOGLE_MAPS_API_KEY est absent."
+          SERVICE=$(find "$PROJECT_DIR" -type f \( \
+            -name '*CarService.java' -o \
+            -name '*CarAppService.java' \
+          \) | head -n 1)
+
+          if [ -z "$SERVICE" ]; then
+            echo "ERREUR : service Android Auto introuvable."
+            find "$PROJECT_DIR" -type f -name '*.java' | grep -i car || true
             exit 1
           fi
+
+          echo "Service Android Auto trouvé : $SERVICE"
+
+          echo "----- AVANT CORRECTION -----"
+          cat "$SERVICE"
+
+          python3 - "$SERVICE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          fichier = Path(sys.argv[1])
+          texte = fichier.read_text(encoding="utf-8")
+
+          if "HostValidator.ALLOW_ALL_HOSTS_VALIDATOR" in texte:
+              print("ALLOW_ALL_HOSTS_VALIDATOR déjà présent.")
+          else:
+              import re
+
+              methode = r'''
+              @Override
+              @androidx.annotation.NonNull
+              public androidx.car.app.validation.HostValidator createHostValidator() {
+                  return androidx.car.app.validation.HostValidator.ALLOW_ALL_HOSTS_VALIDATOR;
+              }
+              '''
+
+              motif = r'(\n\s*}\s*)$'
+
+              match = re.search(motif, texte)
+
+              if not match:
+                  print("ERREUR : impossible de trouver la fin du service.")
+                  sys.exit(1)
+
+              texte = texte[:match.start()] + methode + texte[match.start():]
+
+              fichier.write_text(texte, encoding="utf-8")
+
+              print("createHostValidator() ajouté.")
+
+          PY
+
+          echo "----- APRÈS CORRECTION -----"
+          cat "$SERVICE"
+
+          echo "Vérification HostValidator..."
+
+          if ! grep -q 'ALLOW_ALL_HOSTS_VALIDATOR' "$SERVICE"; then
+            echo "ERREUR : HostValidator non configuré."
+            exit 1
+          fi
+
+          echo "HostValidator Android Auto : OK."
+
+      - name: Vérifier le Manifest Android Auto
+        shell: bash
+        run: |
+          set -e
 
           MANIFEST=$(find "$PROJECT_DIR" -type f -name 'AndroidManifest.xml' | head -n 1)
 
@@ -157,7 +168,59 @@ jobs:
             exit 1
           fi
 
-          echo "Manifest trouvé : $MANIFEST"
+          echo "Manifest : $MANIFEST"
+
+          if ! grep -q 'androidx.car.app.CarAppService' "$MANIFEST"; then
+            echo "ERREUR : CarAppService absent."
+            exit 1
+          fi
+
+          if ! grep -q 'androidx.car.app.category.NAVIGATION' "$MANIFEST"; then
+            echo "ERREUR : catégorie NAVIGATION absente."
+            exit 1
+          fi
+
+          if ! grep -q 'com.google.android.gms.car.application' "$MANIFEST"; then
+            echo "ERREUR : déclaration Android Auto absente."
+            exit 1
+          fi
+
+          echo "Manifest Android Auto : OK."
+
+      - name: Vérifier automotive_app_desc.xml
+        shell: bash
+        run: |
+          set -e
+
+          DESC=$(find "$PROJECT_DIR" -type f -name 'automotive_app_desc.xml' | head -n 1)
+
+          if [ -z "$DESC" ]; then
+            echo "ERREUR : automotive_app_desc.xml introuvable."
+            exit 1
+          fi
+
+          echo "Fichier trouvé : $DESC"
+
+          if ! grep -q '<uses name="template"' "$DESC"; then
+            echo "ERREUR : déclaration template absente."
+            exit 1
+          fi
+
+          echo "automotive_app_desc.xml : OK."
+
+      - name: Injecter la clé Google Maps
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -e
+
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
+            exit 1
+          fi
+
+          MANIFEST=$(find "$PROJECT_DIR" -type f -name 'AndroidManifest.xml' | head -n 1)
 
           python3 - "$MANIFEST" "$GOOGLE_MAPS_API_KEY" <<'PY'
           import sys
@@ -176,34 +239,13 @@ jobs:
           print("Clé Google Maps injectée.")
           PY
 
-      - name: Vérifier Android Auto
-        shell: bash
-        run: |
-          set -e
-
-          MANIFEST=$(find "$PROJECT_DIR" -type f -name 'AndroidManifest.xml' | head -n 1)
-
-          echo "Vérification du service Android Auto..."
-
-          if ! grep -q 'androidx.car.app.CarAppService' "$MANIFEST"; then
-            echo "ERREUR : CarAppService absent du Manifest."
-            exit 1
-          fi
-
-          if ! grep -q 'androidx.car.app.category.NAVIGATION' "$MANIFEST"; then
-            echo "ERREUR : catégorie NAVIGATION absente du Manifest."
-            exit 1
-          fi
-
-          echo "Android Auto : OK."
-
       - name: Construire l'APK
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -e
 
-          echo "Construction de NicoGPS..."
+          echo "Construction de NicoGPS FIX6..."
 
           gradle :app:assembleDebug --no-daemon
 
@@ -214,7 +256,8 @@ jobs:
         run: |
           set -e
 
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' | head -n 1)
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
+            -type f -name '*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERREUR : APK introuvable."
@@ -225,14 +268,15 @@ jobs:
 
           mkdir -p resultat
 
-          cp "$APK" resultat/NicoGPS-6.2.4-AndroidAuto-FIX5.apk
+          cp "$APK" \
+            resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk
 
       - name: Afficher le SHA-1
         shell: bash
         run: |
           set -e
 
-          APK="resultat/NicoGPS-6.2.4-AndroidAuto-FIX5.apk"
+          APK="resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk"
 
           echo "SHA-1 du certificat APK :"
 
@@ -241,6 +285,6 @@ jobs:
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.4-AndroidAuto-FIX5
-          path: resultat/NicoGPS-6.2.4-AndroidAuto-FIX5.apk
+          name: NicoGPS-6.2.4-AndroidAuto-FIX6
+          path: resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk
           if-no-files-found: error
