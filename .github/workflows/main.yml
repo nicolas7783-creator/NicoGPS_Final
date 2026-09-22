@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.3 Android Auto FIX2
+name: Construire NicoGPS 6.2.4 Android Auto FIX3
 
 on:
   workflow_dispatch:
@@ -22,12 +22,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et décompresser le projet
+      - name: Trouver et décompresser NicoGPS FIX3
         run: |
-          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX2.zip' | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX3.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP introuvable"
+            echo "ERREUR : ZIP FIX3 introuvable"
             find . -type f -name '*.zip'
             exit 1
           fi
@@ -67,37 +67,22 @@ jobs:
 
           key = os.environ["GOOGLE_MAPS_API_KEY"]
 
-          text = text.replace(
-              '${MAPS_API_KEY}',
-              key
-          )
+          text = text.replace('${MAPS_API_KEY}', key)
 
           manifest.write_text(text, encoding="utf-8")
 
-          print("Clé Google Maps injectée dans le manifeste.")
+          print("Clé Google Maps injectée.")
           PY
 
-      - name: Corriger build.gradle
+      - name: Vérifier manifestPlaceholders
         working-directory: nicogps-build/NicoGPS5
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          if grep -R "manifestPlaceholders" app/build.gradle; then
+            echo "ERREUR : manifestPlaceholders est encore présent"
+            exit 1
+          fi
 
-          path = Path("app/build.gradle")
-          text = path.read_text(encoding="utf-8")
-
-          text = text.replace(
-              "manifestPlaceholders = [ MAPS_API_KEY: mapsApiKey ]",
-              ""
-          )
-
-          path.write_text(text, encoding="utf-8")
-
-          print("Ligne manifestPlaceholders supprimée.")
-          PY
-
-          echo "Vérification build.gradle :"
-          sed -n '1,40p' app/build.gradle
+          echo "OK : manifestPlaceholders absent."
 
       - name: Construire l'APK
         working-directory: nicogps-build/NicoGPS5
@@ -129,5 +114,5 @@ jobs:
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.3-AndroidAuto-FIX2
+          name: NicoGPS-6.2.4-AndroidAuto-FIX3
           path: nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
