@@ -1,1 +1,199 @@
+name: Construire NicoGPS 6.2.1 Google Maps Android Auto FIX8
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Vérifier la clé Google Maps
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "ERREUR : le secret GOOGLE_MAPS_API_KEY est absent."
+            exit 1
+          fi
+          echo "Clé Google Maps détectée."
+
+      - name: Trouver la source FIX8
+        run: |
+          ZIP=$(find . -maxdepth 3 -type f \
+            -name "NicoGPS6.2.1_GoogleMaps_AndroidAuto_FIX8_source.zip" \
+            | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : fichier source FIX8 introuvable."
+            echo "Fichiers ZIP disponibles :"
+            find . -type f -name "*.zip"
+            exit 1
+          fi
+
+          echo "Source trouvée : $ZIP"
+          echo "SOURCE_ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Décompresser la source FIX8
+        run: |
+          mkdir -p source
+          unzip -q "$SOURCE_ZIP" -d source
+
+          echo "Contenu de la source :"
+          find source -maxdepth 4 -type f | sort
+
+      - name: Trouver le projet Android
+        run: |
+          PROJECT_DIR=$(find source -type f -name "settings.gradle" -o -name "settings.gradle.kts" \
+            | head -n 1 \
+            | xargs -r dirname)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERREUR : projet Android introuvable."
+            exit 1
+          fi
+
+          echo "Projet Android : $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Vérifier Android Auto
+        run: |
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+          SERVICE="$PROJECT_DIR/app/src/main/java/com/nicogps/app/NicoGPSCarService.java"
+          AUTO_DESC="$PROJECT_DIR/app/src/main/res/xml/automotive_app_desc.xml"
+
+          echo "Vérification du manifeste..."
+
+          grep -q "androidx.car.app.CarAppService" "$MANIFEST" || {
+            echo "ERREUR : CarAppService absent."
+            exit 1
+          }
+
+          grep -q "androidx.car.app.category.NAVIGATION" "$MANIFEST" || {
+            echo "ERREUR : catégorie NAVIGATION absente."
+            exit 1
+          }
+
+          grep -q "com.google.android.gms.car.application" "$MANIFEST" || {
+            echo "ERREUR : métadonnée Android Auto absente."
+            exit 1
+          }
+
+          test -f "$AUTO_DESC" || {
+            echo "ERREUR : automotive_app_desc.xml absent."
+            exit 1
+          }
+
+          grep -q '<uses name="template"' "$AUTO_DESC" || {
+            echo "ERREUR : déclaration template absente."
+            exit 1
+          }
+
+          grep -q "ALLOW_ALL_HOSTS_VALIDATOR" "$SERVICE" || {
+            echo "ERREUR : HostValidator attendu absent."
+            exit 1
+          }
+
+          echo "Android Auto : vérifications OK."
+
+      - name: Activer AndroidX
+        run: |
+          GRADLE_PROPERTIES="$PROJECT_DIR/gradle.properties"
+
+          touch "$GRADLE_PROPERTIES"
+
+          grep -q "^android.useAndroidX=true" "$GRADLE_PROPERTIES" || \
+            echo "android.useAndroidX=true" >> "$GRADLE_PROPERTIES"
+
+          grep -q "^android.enableJetifier=true" "$GRADLE_PROPERTIES" || \
+            echo "android.enableJetifier=true" >> "$GRADLE_PROPERTIES"
+
+          echo "gradle.properties :"
+          cat "$GRADLE_PROPERTIES"
+
+      - name: Injecter la clé Google Maps
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+
+          python3 - "$MANIFEST" "$GOOGLE_MAPS_API_KEY" <<'PY'
+          import sys
+          from pathlib import Path
+
+          manifest = Path(sys.argv[1])
+          api_key = sys.argv[2]
+
+          text = manifest.read_text(encoding="utf-8")
+
+          text = text.replace(
+              '${MAPS_API_KEY}',
+              api_key
+          )
+
+          manifest.write_text(text, encoding="utf-8")
+
+          print("Clé Google Maps injectée dans le manifeste.")
+          PY
+
+      - name: Vérifier le manifeste Google Maps
+        run: |
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+
+          grep -q "com.google.android.geo.API_KEY" "$MANIFEST" || {
+            echo "ERREUR : clé Google Maps absente du manifeste."
+            exit 1
+          }
+
+          echo "Configuration Google Maps OK."
+
+      - name: Construire NicoGPS
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          chmod +x gradlew
+          ./gradlew clean assembleDebug --stacktrace
+
+      - name: Vérifier l'APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERREUR : APK introuvable."
+            exit 1
+          fi
+
+          echo "APK généré : $APK"
+          ls -lh "$APK"
+
+      - name: Afficher le SHA-1 de l'APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          echo "SHA-1 du certificat de signature :"
+
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify \
+            --print-certs "$APK" || true
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NicoGPS-6.2.1-GoogleMaps-AndroidAuto-FIX8
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
