@@ -1,0 +1,82 @@
+name: Construire NicoGPS 6.2.2 Android Auto
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le projet
+        uses: actions/checkout@v4
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Trouver et décompresser NicoGPS 6.2.2
+        run: |
+          ZIP=$(find . -maxdepth 2 -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX.zip' | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : ZIP NicoGPS 6.2.2 introuvable"
+            find . -maxdepth 2 -type f -name '*.zip'
+            exit 1
+          fi
+
+          echo "ZIP trouvé : $ZIP"
+          rm -rf nicogps-build
+          mkdir nicogps-build
+          unzip -q "$ZIP" -d nicogps-build
+
+          echo "Contenu du projet :"
+          find nicogps-build -maxdepth 3 -type f | sort
+
+      - name: Préparer Gradle et AndroidX
+        working-directory: nicogps-build/NicoGPS5
+        run: |
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+
+          if [ -z "${{ secrets.GOOGLE_MAPS_API_KEY }}" ]; then
+            echo "ERREUR : GOOGLE_MAPS_API_KEY est absent"
+            exit 1
+          fi
+
+          echo "MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> gradle.properties
+
+      - name: Construire l'APK
+        working-directory: nicogps-build/NicoGPS5
+        run: |
+          gradle :app:assembleDebug --no-daemon
+
+      - name: Vérifier l'APK
+        working-directory: nicogps-build/NicoGPS5
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERREUR : APK non trouvé"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+      - name: Afficher le SHA-1
+        working-directory: nicogps-build/NicoGPS5
+        run: |
+          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep SHA-1 || true
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NicoGPS-6.2.2-AndroidAuto-FIX
+          path: nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
