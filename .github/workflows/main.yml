@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.4 Android Auto FIX6
+name: Construire NicoGPS 6.2.1 Google Maps Android Auto FIX7
 
 on:
   workflow_dispatch:
@@ -23,40 +23,64 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver le ZIP NicoGPS Android Auto
+      # ---------------------------------------------------------
+      # 1 — SÉLECTION STRICTE DE LA BASE 6.2.1 GOOGLE MAPS
+      # ---------------------------------------------------------
+
+      - name: Sélectionner la base NicoGPS 6.2.1 Google Maps
         shell: bash
         run: |
           set -e
 
-          echo "Recherche du ZIP Android Auto..."
+          echo "Recherche EXCLUSIVE de la base 6.2.1 Google Maps..."
 
-          ZIP=$(find . -type f -iname 'NicoGPS_6.3.3_AndroidAuto_FINAL.zip' | head -n 1)
+          mapfile -t ZIPS < <(
+            find . -type f \
+            -iname 'NicoGPS6.2.1_GoogleMap*.zip' \
+            -o -iname 'NicoGPS_6.2.1_GoogleMap*.zip'
+          )
 
-          if [ -z "$ZIP" ]; then
-            ZIP=$(find . -type f -iname '*AndroidAuto*.zip' | head -n 1)
-          fi
-
-          if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun ZIP Android Auto trouvé."
+          if [ "${#ZIPS[@]}" -eq 0 ]; then
+            echo "ERREUR : aucun ZIP 6.2.1 Google Maps trouvé."
+            echo
+            echo "ZIP disponibles :"
             find . -type f -iname '*.zip' -print
             exit 1
           fi
 
-          echo "ZIP sélectionné : $ZIP"
+          echo "ZIP 6.2.1 trouvé(s) :"
+
+          for ZIP in "${ZIPS[@]}"; do
+            echo " - $ZIP"
+          done
+
+          ZIP="${ZIPS[0]}"
+
+          echo
+          echo "BASE SÉLECTIONNÉE : $ZIP"
 
           mkdir -p nicogps-build
 
           unzip -o "$ZIP" -d nicogps-build
 
-          echo "Contenu extrait :"
+          echo
+          echo "Projet extrait."
+
           find nicogps-build -maxdepth 5 -type f | head -100
+
+      # ---------------------------------------------------------
+      # 2 — TROUVER LE PROJET ANDROID
+      # ---------------------------------------------------------
 
       - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
 
-          APP_GRADLE=$(find nicogps-build -type f -path '*/app/build.gradle' | head -n 1)
+          APP_GRADLE=$(find nicogps-build \
+            -type f \
+            -path '*/app/build.gradle' \
+            | head -n 1)
 
           if [ -z "$APP_GRADLE" ]; then
             echo "ERREUR : app/build.gradle introuvable."
@@ -66,9 +90,13 @@ jobs:
 
           PROJECT_DIR=$(dirname "$(dirname "$APP_GRADLE")")
 
-          echo "Projet Android trouvé : $PROJECT_DIR"
+          echo "Projet Android : $PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------
+      # 3 — ANDROIDX
+      # ---------------------------------------------------------
 
       - name: Activer AndroidX
         shell: bash
@@ -85,83 +113,138 @@ jobs:
           grep -q '^android.enableJetifier=true' "$PROPERTIES" || \
             echo 'android.enableJetifier=true' >> "$PROPERTIES"
 
-          echo "gradle.properties configuré."
+          echo "AndroidX configuré."
 
-      - name: Vérifier et corriger Android Auto
+      # ---------------------------------------------------------
+      # 4 — NE PAS TOUCHER À MAINACTIVITY
+      # ---------------------------------------------------------
+
+      - name: Vérifier MainActivity sans modification
         shell: bash
         run: |
           set -e
 
-          SERVICE=$(find "$PROJECT_DIR" -type f \( \
-            -name '*CarService.java' -o \
-            -name '*CarAppService.java' \
-          \) | head -n 1)
+          MAIN=$(find "$PROJECT_DIR" \
+            -type f \
+            -name 'MainActivity.java' \
+            | head -n 1)
 
-          if [ -z "$SERVICE" ]; then
-            echo "ERREUR : service Android Auto introuvable."
-            find "$PROJECT_DIR" -type f -name '*.java' | grep -i car || true
+          if [ -z "$MAIN" ]; then
+            echo "ERREUR : MainActivity.java introuvable."
             exit 1
           fi
 
-          echo "Service Android Auto trouvé : $SERVICE"
+          echo "MainActivity trouvé : $MAIN"
+          echo "AUCUNE MODIFICATION DE MAINACTIVITY."
 
-          echo "----- AVANT CORRECTION -----"
-          cat "$SERVICE"
+      # ---------------------------------------------------------
+      # 5 — TROUVER LE SERVICE ANDROID AUTO
+      # ---------------------------------------------------------
+
+      - name: Trouver le service Android Auto
+        shell: bash
+        run: |
+          set -e
+
+          SERVICE=$(find "$PROJECT_DIR" \
+            -type f \
+            \( \
+              -name '*CarService.java' \
+              -o \
+              -name '*CarAppService.java' \
+            \) \
+            | head -n 1)
+
+          if [ -z "$SERVICE" ]; then
+            echo "ERREUR : aucun service Android Auto trouvé."
+
+            echo
+            echo "Fichiers contenant Car :"
+
+            find "$PROJECT_DIR" \
+              -type f \
+              -name '*.java' \
+              | grep -i car || true
+
+            exit 1
+          fi
+
+          echo "Service Android Auto trouvé :"
+          echo "$SERVICE"
+
+          echo "CAR_SERVICE=$SERVICE" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------
+      # 6 — CORRIGER LE HOST VALIDATOR
+      # ---------------------------------------------------------
+
+      - name: Corriger HostValidator Android Auto
+        shell: bash
+        run: |
+          set -e
+
+          SERVICE="$CAR_SERVICE"
+
+          echo "Correction Android Auto dans : $SERVICE"
 
           python3 - "$SERVICE" <<'PY'
           import sys
+          import re
           from pathlib import Path
 
           fichier = Path(sys.argv[1])
+
           texte = fichier.read_text(encoding="utf-8")
 
-          if "HostValidator.ALLOW_ALL_HOSTS_VALIDATOR" in texte:
-              print("ALLOW_ALL_HOSTS_VALIDATOR déjà présent.")
-          else:
-              import re
+          if "ALLOW_ALL_HOSTS_VALIDATOR" in texte:
+              print("HostValidator déjà présent.")
+              sys.exit(0)
 
-              methode = r'''
+          methode = r'''
               @Override
               @androidx.annotation.NonNull
               public androidx.car.app.validation.HostValidator createHostValidator() {
                   return androidx.car.app.validation.HostValidator.ALLOW_ALL_HOSTS_VALIDATOR;
               }
-              '''
+          '''
 
-              motif = r'(\n\s*}\s*)$'
+          # Ajout juste avant la dernière accolade de la classe.
+          position = texte.rfind("}")
 
-              match = re.search(motif, texte)
+          if position == -1:
+              print("ERREUR : fin de classe introuvable.")
+              sys.exit(1)
 
-              if not match:
-                  print("ERREUR : impossible de trouver la fin du service.")
-                  sys.exit(1)
+          texte = texte[:position] + methode + "\n" + texte[position:]
 
-              texte = texte[:match.start()] + methode + texte[match.start():]
+          fichier.write_text(texte, encoding="utf-8")
 
-              fichier.write_text(texte, encoding="utf-8")
-
-              print("createHostValidator() ajouté.")
-
+          print("HostValidator ajouté.")
           PY
 
-          echo "----- APRÈS CORRECTION -----"
-          cat "$SERVICE"
-
-          echo "Vérification HostValidator..."
+          echo
+          echo "Vérification..."
 
           if ! grep -q 'ALLOW_ALL_HOSTS_VALIDATOR' "$SERVICE"; then
-            echo "ERREUR : HostValidator non configuré."
+            echo "ERREUR : HostValidator absent après correction."
             exit 1
           fi
 
           echo "HostValidator Android Auto : OK."
+
+      # ---------------------------------------------------------
+      # 7 — VÉRIFIER LE MANIFEST
+      # ---------------------------------------------------------
 
       - name: Vérifier le Manifest Android Auto
         shell: bash
         run: |
           set -e
 
-          MANIFEST=$(find "$PROJECT_DIR" -type f -name 'AndroidManifest.xml' | head -n 1)
+          MANIFEST=$(find "$PROJECT_DIR" \
+            -type f \
+            -name 'AndroidManifest.xml' \
+            | head -n 1)
 
           if [ -z "$MANIFEST" ]; then
             echo "ERREUR : AndroidManifest.xml introuvable."
@@ -187,26 +270,37 @@ jobs:
 
           echo "Manifest Android Auto : OK."
 
-      - name: Vérifier automotive_app_desc.xml
+      # ---------------------------------------------------------
+      # 8 — VÉRIFIER AUTOMOTIVE APP DESC
+      # ---------------------------------------------------------
+
+      - name: Vérifier automotive_app_desc
         shell: bash
         run: |
           set -e
 
-          DESC=$(find "$PROJECT_DIR" -type f -name 'automotive_app_desc.xml' | head -n 1)
+          DESC=$(find "$PROJECT_DIR" \
+            -type f \
+            -name 'automotive_app_desc.xml' \
+            | head -n 1)
 
           if [ -z "$DESC" ]; then
             echo "ERREUR : automotive_app_desc.xml introuvable."
             exit 1
           fi
 
-          echo "Fichier trouvé : $DESC"
+          echo "Fichier : $DESC"
 
           if ! grep -q '<uses name="template"' "$DESC"; then
-            echo "ERREUR : déclaration template absente."
+            echo "ERREUR : <uses name=\"template\" /> absent."
             exit 1
           fi
 
           echo "automotive_app_desc.xml : OK."
+
+      # ---------------------------------------------------------
+      # 9 — CLÉ GOOGLE MAPS
+      # ---------------------------------------------------------
 
       - name: Injecter la clé Google Maps
         shell: bash
@@ -216,11 +310,14 @@ jobs:
           set -e
 
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
+            echo "ERREUR : GOOGLE_MAPS_API_KEY absent."
             exit 1
           fi
 
-          MANIFEST=$(find "$PROJECT_DIR" -type f -name 'AndroidManifest.xml' | head -n 1)
+          MANIFEST=$(find "$PROJECT_DIR" \
+            -type f \
+            -name 'AndroidManifest.xml' \
+            | head -n 1)
 
           python3 - "$MANIFEST" "$GOOGLE_MAPS_API_KEY" <<'PY'
           import sys
@@ -239,25 +336,41 @@ jobs:
           print("Clé Google Maps injectée.")
           PY
 
-      - name: Construire l'APK
+      # ---------------------------------------------------------
+      # 10 — CONSTRUIRE
+      # ---------------------------------------------------------
+
+      - name: Construire NicoGPS FIX7
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -e
 
-          echo "Construction de NicoGPS FIX6..."
+          echo "======================================"
+          echo " CONSTRUCTION NICO GPS FIX7"
+          echo " BASE : 6.2.1 GOOGLE MAPS"
+          echo " ANDROID AUTO : OUI"
+          echo " MAINACTIVITY : INCHANGÉE"
+          echo "======================================"
 
           gradle :app:assembleDebug --no-daemon
 
+          echo
           echo "BUILD OK."
 
-      - name: Vérifier l'APK
+      # ---------------------------------------------------------
+      # 11 — APK
+      # ---------------------------------------------------------
+
+      - name: Préparer l'APK
         shell: bash
         run: |
           set -e
 
           APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
-            -type f -name '*.apk' | head -n 1)
+            -type f \
+            -name '*.apk' \
+            | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERREUR : APK introuvable."
@@ -269,22 +382,33 @@ jobs:
           mkdir -p resultat
 
           cp "$APK" \
-            resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk
+            resultat/NicoGPS-6.2.1-GoogleMaps-AndroidAuto-FIX7.apk
+
+      # ---------------------------------------------------------
+      # 12 — SHA-1
+      # ---------------------------------------------------------
 
       - name: Afficher le SHA-1
         shell: bash
         run: |
           set -e
 
-          APK="resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk"
+          APK="resultat/NicoGPS-6.2.1-GoogleMaps-AndroidAuto-FIX7.apk"
 
           echo "SHA-1 du certificat APK :"
 
-          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "$APK" || true
+          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)/apksigner \
+            verify \
+            --print-certs \
+            "$APK" || true
+
+      # ---------------------------------------------------------
+      # 13 — ARTIFACT
+      # ---------------------------------------------------------
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.4-AndroidAuto-FIX6
-          path: resultat/NicoGPS-6.2.4-AndroidAuto-FIX6.apk
+          name: NicoGPS-6.2.1-GoogleMaps-AndroidAuto-FIX7
+          path: resultat/NicoGPS-6.2.1-GoogleMaps-AndroidAuto-FIX7.apk
           if-no-files-found: error
