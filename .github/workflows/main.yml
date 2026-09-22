@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.4 Android Auto FIX4
+name: Construire NicoGPS 6.2.4 Android Auto FIX5
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Récupérer le projet
         uses: actions/checkout@v4
 
@@ -22,100 +23,206 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et décompresser le FIX4
+      - name: Trouver et décompresser NicoGPS
+        shell: bash
         run: |
-          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX4.zip' | head -n 1)
+          set -e
+
+          echo "Recherche du ZIP NicoGPS..."
+
+          ZIP=$(find . -type f -iname 'NicoGPS6.2.2_GoogleMaps*.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP FIX4 introuvable"
-            find . -type f -name '*.zip'
+            echo "ERREUR : ZIP NicoGPS introuvable."
+            echo "ZIP disponibles :"
+            find . -type f -iname '*.zip' -print
             exit 1
           fi
 
           echo "ZIP trouvé : $ZIP"
 
           rm -rf nicogps-build
-          mkdir nicogps-build
+          mkdir -p nicogps-build
 
           unzip -q "$ZIP" -d nicogps-build
 
-          echo "Projet extrait :"
-          find nicogps-build/NicoGPS5 -maxdepth 3 -type f | sort
+          echo "Recherche du dossier NicoGPS5..."
 
-      - name: Préparer AndroidX
-        working-directory: nicogps-build/NicoGPS5
+          if [ ! -d "nicogps-build/NicoGPS5" ]; then
+            echo "ERREUR : dossier NicoGPS5 introuvable."
+            find nicogps-build -maxdepth 3 -type d -print
+            exit 1
+          fi
+
+          echo "Projet trouvé."
+
+      - name: Activer AndroidX
+        shell: bash
         run: |
-          echo "android.useAndroidX=true" >> gradle.properties
-          echo "android.enableJetifier=true" >> gradle.properties
+          set -e
 
-      - name: Injecter la clé Google Maps
-        working-directory: nicogps-build/NicoGPS5
+          cd nicogps-build/NicoGPS5
+
+          touch gradle.properties
+
+          grep -qxF 'android.useAndroidX=true' gradle.properties || \
+            echo 'android.useAndroidX=true' >> gradle.properties
+
+          grep -qxF 'android.enableJetifier=true' gradle.properties || \
+            echo 'android.enableJetifier=true' >> gradle.properties
+
+          echo "gradle.properties :"
+          cat gradle.properties
+
+      - name: Vérifier la clé Google Maps
+        shell: bash
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
+          set -e
+
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : GOOGLE_MAPS_API_KEY absente"
+            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
             exit 1
           fi
 
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
+          echo "Clé Google Maps détectée."
 
-          manifest = Path("app/src/main/AndroidManifest.xml")
-          text = manifest.read_text(encoding="utf-8")
-
-          key = os.environ["GOOGLE_MAPS_API_KEY"]
-
-          text = text.replace('${MAPS_API_KEY}', key)
-
-          manifest.write_text(text, encoding="utf-8")
-
-          print("Clé Google Maps injectée.")
-          PY
-
-      - name: Vérifier le projet
-        working-directory: nicogps-build/NicoGPS5
+      - name: Injecter la clé Google Maps
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
-          if grep -R "manifestPlaceholders" app/build.gradle; then
-            echo "ERREUR : manifestPlaceholders est encore présent"
+          set -e
+
+          MANIFEST="nicogps-build/NicoGPS5/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERREUR : AndroidManifest.xml introuvable."
             exit 1
           fi
 
-          echo "OK : manifestPlaceholders absent."
+          echo "Manifest trouvé : $MANIFEST"
 
-          echo "Version du projet :"
-          grep "versionName" app/build.gradle
+          sed -i "s|\${MAPS_API_KEY}|${GOOGLE_MAPS_API_KEY}|g" "$MANIFEST"
+          sed -i "s|\${GOOGLE_MAPS_API_KEY}|${GOOGLE_MAPS_API_KEY}|g" "$MANIFEST"
+
+          echo "Clé Google Maps injectée."
+
+      - name: Vérifier Android Auto
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="nicogps-build/NicoGPS5/app/src/main/AndroidManifest.xml"
+
+          echo "Vérification du manifest Android Auto..."
+
+          grep -q "androidx.car.app.CarAppService" "$MANIFEST" || {
+            echo "ERREUR : CarAppService absent."
+            exit 1
+          }
+
+          grep -q "androidx.car.app.category.NAVIGATION" "$MANIFEST" || {
+            echo "ERREUR : catégorie NAVIGATION absente."
+            exit 1
+          }
+
+          grep -q "androidx.car.app.NAVIGATION_TEMPLATES" "$MANIFEST" || {
+            echo "ERREUR : permission NAVIGATION_TEMPLATES absente."
+            exit 1
+          }
+
+          grep -q "com.google.android.gms.car.application" "$MANIFEST" || {
+            echo "ERREUR : déclaration Android Auto absente."
+            exit 1
+          }
+
+          echo "Android Auto correctement déclaré."
+
+      - name: Vérifier le descripteur Android Auto
+        shell: bash
+        run: |
+          set -e
+
+          DESC="nicogps-build/NicoGPS5/app/src/main/res/xml/automotive_app_desc.xml"
+
+          if [ ! -f "$DESC" ]; then
+            echo "ERREUR : automotive_app_desc.xml introuvable."
+            exit 1
+          fi
+
+          echo "Descripteur Android Auto trouvé."
+          cat "$DESC"
+
+      - name: Vérifier MainActivity
+        shell: bash
+        run: |
+          set -e
+
+          JAVA_FILE="nicogps-build/NicoGPS5/app/src/main/java/com/nicogps/app/MainActivity.java"
+
+          if [ ! -f "$JAVA_FILE" ]; then
+            echo "ERREUR : MainActivity.java introuvable."
+            exit 1
+          fi
+
+          echo "MainActivity.java trouvé."
+
+          if grep -nF '\n' "$JAVA_FILE"; then
+            echo "ERREUR : caractères littéraux \n détectés dans MainActivity.java."
+            echo "Le fichier source ne sera PAS modifié automatiquement."
+            exit 1
+          fi
+
+          echo "Aucun caractère \n parasite."
 
       - name: Construire l'APK
-        working-directory: nicogps-build/NicoGPS5
+        shell: bash
         run: |
-          gradle :app:assembleDebug --no-daemon
+          set -e
+
+          cd nicogps-build/NicoGPS5
+
+          chmod +x gradlew
+
+          ./gradlew :app:assembleDebug --no-daemon
 
       - name: Vérifier l'APK
-        working-directory: nicogps-build/NicoGPS5
+        shell: bash
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          set -e
+
+          APK="nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERREUR : APK non trouvé"
+            echo "ERREUR : APK non généré."
             exit 1
           fi
 
-          echo "APK trouvé :"
+          echo "APK généré avec succès."
           ls -lh "$APK"
 
       - name: Afficher le SHA-1
-        working-directory: nicogps-build/NicoGPS5
+        shell: bash
         run: |
-          APKSIGNER="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
+          set -e
 
-          if [ -f "$APKSIGNER" ]; then
-            "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk || true
+          APK="nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk"
+
+          APKSIGNER=$(find "$ANDROID_HOME" -type f -name apksigner 2>/dev/null | head -n 1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner introuvable."
+            exit 0
           fi
+
+          echo "Certificat de l'APK :"
+          "$APKSIGNER" verify --print-certs "$APK" || true
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.4-AndroidAuto-FIX4
+          name: NicoGPS-6.2.4-AndroidAuto-FIX5
           path: nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
