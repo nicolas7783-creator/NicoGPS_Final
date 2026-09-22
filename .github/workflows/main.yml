@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.2.2 Android Auto
+name: Construire NicoGPS 6.2.3 Android Auto FIX2
 
 on:
   workflow_dispatch:
@@ -22,36 +22,82 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et décompresser NicoGPS 6.2.2
+      - name: Trouver et décompresser le projet
         run: |
-          ZIP=$(find . -maxdepth 2 -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX.zip' | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS6.2.2_GoogleMaps_AndroidAuto_FIX2.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP NicoGPS 6.2.2 introuvable"
-            find . -maxdepth 2 -type f -name '*.zip'
+            echo "ERREUR : ZIP introuvable"
+            find . -type f -name '*.zip'
             exit 1
           fi
 
           echo "ZIP trouvé : $ZIP"
+
           rm -rf nicogps-build
           mkdir nicogps-build
+
           unzip -q "$ZIP" -d nicogps-build
 
-          echo "Contenu du projet :"
-          find nicogps-build -maxdepth 3 -type f | sort
+          echo "Projet extrait :"
+          find nicogps-build/NicoGPS5 -maxdepth 3 -type f | sort
 
-      - name: Préparer Gradle et AndroidX
+      - name: Préparer AndroidX
         working-directory: nicogps-build/NicoGPS5
         run: |
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
 
-          if [ -z "${{ secrets.GOOGLE_MAPS_API_KEY }}" ]; then
-            echo "ERREUR : GOOGLE_MAPS_API_KEY est absent"
+      - name: Injecter la clé Google Maps
+        working-directory: nicogps-build/NicoGPS5
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "ERREUR : GOOGLE_MAPS_API_KEY est absente"
             exit 1
           fi
 
-          echo "MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> gradle.properties
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          key = os.environ["GOOGLE_MAPS_API_KEY"]
+
+          text = text.replace(
+              '${MAPS_API_KEY}',
+              key
+          )
+
+          manifest.write_text(text, encoding="utf-8")
+
+          print("Clé Google Maps injectée dans le manifeste.")
+          PY
+
+      - name: Corriger build.gradle
+        working-directory: nicogps-build/NicoGPS5
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/build.gradle")
+          text = path.read_text(encoding="utf-8")
+
+          text = text.replace(
+              "manifestPlaceholders = [ MAPS_API_KEY: mapsApiKey ]",
+              ""
+          )
+
+          path.write_text(text, encoding="utf-8")
+
+          print("Ligne manifestPlaceholders supprimée.")
+          PY
+
+          echo "Vérification build.gradle :"
+          sed -n '1,40p' app/build.gradle
 
       - name: Construire l'APK
         working-directory: nicogps-build/NicoGPS5
@@ -68,15 +114,20 @@ jobs:
             exit 1
           fi
 
+          echo "APK trouvé :"
           ls -lh "$APK"
 
       - name: Afficher le SHA-1
         working-directory: nicogps-build/NicoGPS5
         run: |
-          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep SHA-1 || true
+          APKSIGNER="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
+
+          if [ -f "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk || true
+          fi
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.2.2-AndroidAuto-FIX
+          name: NicoGPS-6.2.3-AndroidAuto-FIX2
           path: nicogps-build/NicoGPS5/app/build/outputs/apk/debug/app-debug.apk
