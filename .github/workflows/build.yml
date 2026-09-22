@@ -1,4 +1,4 @@
-name: Construire NicoGPS 6.3.3
+name: Construire NicoGPS 6.3.4
 
 on:
   workflow_dispatch:
@@ -23,14 +23,14 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Trouver et extraire NicoGPS 6.3.3
+      - name: Trouver et extraire NicoGPS 6.3.4
         run: |
           set -e
 
-          ZIP=$(find . -type f -name 'NicoGPS_6.3.3_AndroidAuto_FINAL.zip' | head -n 1)
+          ZIP=$(find . -type f -name 'NicoGPS_6.3.4_AndroidAuto_FINAL_v2.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP NicoGPS 6.3.3 introuvable."
+            echo "ERREUR : ZIP NicoGPS 6.3.4 introuvable."
             find . -maxdepth 4 -type f
             exit 1
           fi
@@ -142,14 +142,14 @@ jobs:
           print("Cle Google Maps injectee dans le manifeste.")
           PY
 
-      - name: Construire NicoGPS 6.3.3
+      - name: Construire NicoGPS 6.3.4
         run: |
           set -e
 
           cd "$PROJECT_DIR"
 
           echo "=========================================="
-          echo "CONSTRUCTION DE NICOGPS 6.3.3"
+          echo "CONSTRUCTION DE NICOGPS 6.3.4"
           echo "=========================================="
 
           if [ -f "./gradlew" ]; then
@@ -190,14 +190,14 @@ jobs:
           fi
 
           echo "=========================================="
-          echo "SHA-1 DU CERTIFICAT NICOGPS 6.3.3"
+          echo "SHA-1 DU CERTIFICAT NICOGPS 6.3.4"
           echo "=========================================="
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-      - name: Publier l APK NicoGPS 6.3.3
+      - name: Publier l APK NicoGPS 6.3.4
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-6.3.3-AndroidAuto
+          name: NicoGPS-6.3.4-AndroidAuto
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
