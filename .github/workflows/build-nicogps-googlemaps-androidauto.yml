@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Recuperer le depot
         uses: actions/checkout@v4
 
@@ -15,10 +16,14 @@ jobs:
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
+          set -e
+
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
             echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent"
             exit 1
           fi
+
+          echo "Cle Google detectee."
 
       - name: Installer Java 17
         uses: actions/setup-java@v5
@@ -39,7 +44,8 @@ jobs:
           ZIP=$(find . -type f -iname "*6.2.1*.zip" -print -quit)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun ZIP 6.2.1 trouve"
+            echo "ERREUR : aucun ZIP 6.2.1 trouve."
+            echo ""
             echo "ZIP disponibles :"
             find . -type f -name "*.zip" -print
             exit 1
@@ -48,25 +54,34 @@ jobs:
           echo "Source selectionnee : $ZIP"
 
           mkdir -p _nicogps_source
+
           unzip -q "$ZIP" -d _nicogps_source
+
+          echo "Source extraite."
 
       - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
 
-          SETTINGS=$(find _nicogps_source -type f -name "settings.gradle" -o -name "settings.gradle.kts" -print -quit)
+          SETTINGS=$(find _nicogps_source -type f -name "settings.gradle" -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERREUR : settings.gradle introuvable"
-            echo "Contenu du source :"
-            find _nicogps_source -maxdepth 5 -type f | head -100
+            SETTINGS=$(find _nicogps_source -type f -name "settings.gradle.kts" -print -quit)
+          fi
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERREUR : aucun settings.gradle trouve."
+            echo ""
+            echo "Fichiers trouves dans le source :"
+            find _nicogps_source -type f | head -100
             exit 1
           fi
 
           ROOT=$(dirname "$SETTINGS")
 
           echo "Projet Android : $ROOT"
+
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
       - name: Verifier la structure Android
@@ -76,10 +91,13 @@ jobs:
           set -e
 
           echo "=== Structure du projet ==="
+
           find . -maxdepth 3 -type f | sort | head -150
 
+          echo ""
+
           if [ ! -f "app/build.gradle" ]; then
-            echo "ERREUR : app/build.gradle introuvable"
+            echo "ERREUR : app/build.gradle introuvable."
             exit 1
           fi
 
@@ -87,7 +105,10 @@ jobs:
 
       - name: Activer AndroidX
         working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
+          set -e
+
           touch gradle.properties
 
           if grep -q "^android.useAndroidX=" gradle.properties; then
@@ -102,7 +123,7 @@ jobs:
             echo "android.enableJetifier=true" >> gradle.properties
           fi
 
-          echo "=== gradle.properties ==="
+          echo "=== AndroidX active ==="
           cat gradle.properties
 
       - name: Migrer vers Navigation SDK 7.9.0
@@ -115,29 +136,43 @@ jobs:
 
           echo "Fichier Gradle : $APP_GRADLE"
 
-          echo "=== Avant migration ==="
-          grep -nE "play-services-maps|navigation:" "$APP_GRADLE" || true
+          echo ""
+          echo "=== Dependances avant migration ==="
+
+          grep -n "play-services-maps" "$APP_GRADLE" || true
+          grep -n "navigation:" "$APP_GRADLE" || true
+
+          echo ""
+          echo "Suppression de Google Maps SDK direct..."
 
           sed -i "/play-services-maps/d" "$APP_GRADLE"
+
+          echo "Ajout de Navigation SDK 7.9.0..."
 
           if ! grep -q "com.google.android.libraries.navigation:navigation" "$APP_GRADLE"; then
             sed -i "/dependencies[[:space:]]*{/a\    implementation 'com.google.android.libraries.navigation:navigation:7.9.0'" "$APP_GRADLE"
           fi
 
-          echo "=== Apres migration ==="
-          grep -nE "play-services-maps|navigation:" "$APP_GRADLE" || true
+          echo ""
+          echo "=== Dependances apres migration ==="
+
+          grep -n "navigation:" "$APP_GRADLE" || true
+          grep -n "play-services-maps" "$APP_GRADLE" || true
 
           if grep -q "play-services-maps" "$APP_GRADLE"; then
-            echo "ERREUR : ancienne dependance Maps encore presente"
+            echo "ERREUR : play-services-maps est encore present."
             exit 1
           fi
 
           if ! grep -q "com.google.android.libraries.navigation:navigation:7.9.0" "$APP_GRADLE"; then
-            echo "ERREUR : Navigation SDK 7.9.0 non ajoute"
+            echo "ERREUR : Navigation SDK 7.9.0 n'a pas ete ajoute."
             exit 1
           fi
 
-      - name: Configurer la compilation Java
+          echo ""
+          echo "Migration Navigation SDK OK."
+
+      - name: Configurer Java 17
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
@@ -150,56 +185,4 @@ jobs:
               compileOptions {\
                   sourceCompatibility JavaVersion.VERSION_17\
                   targetCompatibility JavaVersion.VERSION_17\
-              }' "$APP_GRADLE"
-          fi
-
-          echo "Configuration Java verifiee."
-
-      - name: Configurer la cle Google Maps
-        working-directory: ${{ env.PROJECT_ROOT }}
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-        shell: bash
-        run: |
-          set -e
-
-          MANIFEST=$(find . -type f -path "*/src/main/AndroidManifest.xml" -print -quit)
-
-          if [ -z "$MANIFEST" ]; then
-            echo "ERREUR : AndroidManifest.xml introuvable"
-            exit 1
-          fi
-
-          echo "Manifest : $MANIFEST"
-
-          python3 - "$MANIFEST" "$GOOGLE_MAPS_API_KEY" <<'PY'
-          import sys
-          import re
-          from pathlib import Path
-
-          manifest = Path(sys.argv[1])
-          api_key = sys.argv[2]
-
-          text = manifest.read_text(encoding="utf-8")
-
-          new_meta = (
-              '<meta-data '
-              'android:name="com.google.android.geo.API_KEY" '
-              f'android:value="{api_key}" />'
-          )
-
-          pattern = (
-              r'<meta-data\s+'
-              r'android:name="com\.google\.android\.geo\.API_KEY"\s+'
-              r'android:value="[^"]*"\s*/>'
-          )
-
-          if re.search(pattern, text):
-              text = re.sub(pattern, new_meta, text)
-          elif "</application>" in text:
-              text = text.replace(
-                  "</application>",
-                  "        " + new_meta + "\n    </application>"
-              )
-          else:
-              print("
+              }' "$APP_GR
