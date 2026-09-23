@@ -9,8 +9,17 @@ jobs:
 
     steps:
 
+      # ==========================================================
+      # 1 - RECUPERER LE DEPOT
+      # ==========================================================
+
       - name: Recuperer le depot
         uses: actions/checkout@v4
+
+
+      # ==========================================================
+      # 2 - VERIFIER LA CLE GOOGLE
+      # ==========================================================
 
       - name: Verifier la cle Google
         env:
@@ -25,57 +34,84 @@ jobs:
 
           echo "Cle Google OK"
 
+
+      # ==========================================================
+      # 3 - JAVA 17
+      # ==========================================================
+
       - name: Installer Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+
+      # ==========================================================
+      # 4 - GRADLE 8.13
+      # ==========================================================
+
       - name: Installer Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+
+
+      # ==========================================================
+      # 5 - TROUVER LE ZIP 6.2.1
+      # ==========================================================
 
       - name: Trouver le ZIP NicoGPS 6.2.1
         shell: bash
         run: |
           set -e
 
+          echo "Recherche du ZIP NicoGPS 6.2.1..."
+
           ZIP=$(find . -type f -iname "*6.2.1*.zip" -print -quit)
 
           if [ -z "$ZIP" ]; then
+            echo ""
             echo "ERREUR : aucun ZIP 6.2.1 trouve"
-
             echo ""
             echo "ZIP disponibles :"
             find . -type f -name "*.zip" -print
-
             exit 1
           fi
 
+          echo ""
           echo "======================================"
           echo "ZIP SELECTIONNE"
           echo "======================================"
           echo "$ZIP"
+          echo ""
 
           rm -rf _nicogps_source
-
           mkdir -p _nicogps_source
 
           unzip -q "$ZIP" -d _nicogps_source
 
-          echo ""
           echo "Source extraite."
+
+
+      # ==========================================================
+      # 6 - TROUVER LE PROJET ANDROID
+      # ==========================================================
 
       - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
 
-          SETTINGS=$(find _nicogps_source -type f -name "settings.gradle" -print -quit)
+          SETTINGS=$(find _nicogps_source \
+            -type f \
+            -name "settings.gradle" \
+            -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            SETTINGS=$(find _nicogps_source -type f -name "settings.gradle.kts" -print -quit)
+            SETTINGS=$(find _nicogps_source \
+              -type f \
+              -name "settings.gradle.kts" \
+              -print -quit)
           fi
 
           if [ -z "$SETTINGS" ]; then
@@ -83,24 +119,26 @@ jobs:
 
             echo ""
             echo "Fichiers trouves :"
-
-            find _nicogps_source -type f | head -150
+            find _nicogps_source -type f | head -200
 
             exit 1
           fi
 
           ROOT=$(dirname "$SETTINGS")
 
-          if [ ! -f "$ROOT/app/build.gradle" ]; then
-            echo "ERREUR : app/build.gradle introuvable"
+          if [ ! -f "$ROOT/app/build.gradle" ] && \
+             [ ! -f "$ROOT/app/build.gradle.kts" ]; then
+
+            echo "ERREUR : build.gradle du module app introuvable"
 
             echo "Projet detecte : $ROOT"
 
-            find "$ROOT" -maxdepth 3 -type f | head -100
+            find "$ROOT" -maxdepth 3 -type f | head -150
 
             exit 1
           fi
 
+          echo ""
           echo "======================================"
           echo "PROJET ANDROID RETENU"
           echo "======================================"
@@ -109,23 +147,48 @@ jobs:
 
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
+
+      # ==========================================================
+      # 7 - VERIFIER STRUCTURE
+      # ==========================================================
+
       - name: Verifier la structure Android
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          echo "=== Structure ==="
+          echo "=== STRUCTURE DU PROJET ==="
 
-          find . -maxdepth 3 -type f | sort | head -150
+          find . -maxdepth 3 -type f | sort | head -200
 
           echo ""
 
-          test -f settings.gradle || test -f settings.gradle.kts
+          if [ -f settings.gradle ]; then
+            echo "settings.gradle OK"
+          elif [ -f settings.gradle.kts ]; then
+            echo "settings.gradle.kts OK"
+          else
+            echo "ERREUR settings.gradle"
+            exit 1
+          fi
 
-          test -f app/build.gradle
+          if [ -f app/build.gradle ]; then
+            echo "app/build.gradle OK"
+          elif [ -f app/build.gradle.kts ]; then
+            echo "app/build.gradle.kts OK"
+          else
+            echo "ERREUR app/build.gradle"
+            exit 1
+          fi
 
+          echo ""
           echo "Structure Android OK"
+
+
+      # ==========================================================
+      # 8 - ANDROIDX
+      # ==========================================================
 
       - name: Activer AndroidX
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -136,13 +199,17 @@ jobs:
           touch gradle.properties
 
           if grep -q "^android.useAndroidX=" gradle.properties; then
-            sed -i "s/^android.useAndroidX=.*/android.useAndroidX=true/" gradle.properties
+            sed -i \
+              "s/^android.useAndroidX=.*/android.useAndroidX=true/" \
+              gradle.properties
           else
             echo "android.useAndroidX=true" >> gradle.properties
           fi
 
           if grep -q "^android.enableJetifier=" gradle.properties; then
-            sed -i "s/^android.enableJetifier=.*/android.enableJetifier=true/" gradle.properties
+            sed -i \
+              "s/^android.enableJetifier=.*/android.enableJetifier=true/" \
+              gradle.properties
           else
             echo "android.enableJetifier=true" >> gradle.properties
           fi
@@ -150,7 +217,121 @@ jobs:
           echo ""
           echo "AndroidX OK"
 
-      - name: Migrer vers Navigation SDK 7.9.0
+
+      # ==========================================================
+      # 9 - MISE A NIVEAU AGP / KOTLIN
+      # ==========================================================
+
+      - name: Mettre a niveau AGP et Kotlin
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "MISE A NIVEAU AGP / KOTLIN"
+          echo "=========================================="
+
+          echo ""
+          echo "Fichiers Gradle :"
+
+          find . \
+            \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -type f \
+            -print
+
+          echo ""
+          echo "Recherche AGP..."
+
+          # AGP dans build.gradle
+          find . -type f -name "*.gradle" -print0 | while IFS= read -r -d '' FILE
+          do
+
+            sed -i -E \
+              "s/com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+/com.android.tools.build:gradle:8.13.2/g" \
+              "$FILE"
+
+            sed -i -E \
+              "s/id ['\"]com\.android\.application['\"] version ['\"][0-9]+\.[0-9]+\.[0-9]+['\"]/id 'com.android.application' version '8.13.2'/g" \
+              "$FILE"
+
+            sed -i -E \
+              "s/id ['\"]com\.android\.library['\"] version ['\"][0-9]+\.[0-9]+\.[0-9]+['\"]/id 'com.android.library' version '8.13.2'/g" \
+              "$FILE"
+
+          done
+
+          # AGP dans build.gradle.kts
+          find . -type f -name "*.gradle.kts" -print0 | while IFS= read -r -d '' FILE
+          do
+
+            sed -i -E \
+              's/com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+/com.android.tools.build:gradle:8.13.2/g' \
+              "$FILE"
+
+            sed -i -E \
+              's/id\("com\.android\.application"\)[[:space:]]+version[[:space:]]+"[0-9]+\.[0-9]+\.[0-9]+"/id("com.android.application") version "8.13.2"/g' \
+              "$FILE"
+
+            sed -i -E \
+              's/id\("com\.android\.library"\)[[:space:]]+version[[:space:]]+"[0-9]+\.[0-9]+\.[0-9]+"/id("com.android.library") version "8.13.2"/g' \
+              "$FILE"
+
+          done
+
+          echo ""
+          echo "Recherche Kotlin..."
+
+          find . -type f -name "*.gradle" -print0 | while IFS= read -r -d '' FILE
+          do
+
+            sed -i -E \
+              "s/org\.jetbrains\.kotlin:kotlin-gradle-plugin:[0-9]+\.[0-9]+\.[0-9]+/org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0/g" \
+              "$FILE"
+
+            sed -i -E \
+              "s/id ['\"]org\.jetbrains\.kotlin\.android['\"] version ['\"][0-9]+\.[0-9]+\.[0-9]+['\"]/id 'org.jetbrains.kotlin.android' version '2.3.0'/g" \
+              "$FILE"
+
+            sed -i -E \
+              "s/id ['\"]kotlin-android['\"] version ['\"][0-9]+\.[0-9]+\.[0-9]+['\"]/id 'kotlin-android' version '2.3.0'/g" \
+              "$FILE"
+
+          done
+
+          find . -type f -name "*.gradle.kts" -print0 | while IFS= read -r -d '' FILE
+          do
+
+            sed -i -E \
+              's/org\.jetbrains\.kotlin:kotlin-gradle-plugin:[0-9]+\.[0-9]+\.[0-9]+/org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0/g' \
+              "$FILE"
+
+            sed -i -E \
+              's/id\("org\.jetbrains\.kotlin\.android"\)[[:space:]]+version[[:space:]]+"[0-9]+\.[0-9]+\.[0-9]+"/id("org.jetbrains.kotlin.android") version "2.3.0"/g' \
+              "$FILE"
+
+          done
+
+          echo ""
+          echo "=== VERSIONS DETECTEES ==="
+
+          grep -R \
+            -E \
+            "com.android.tools.build:gradle|com.android.application.*version|kotlin-gradle-plugin|org.jetbrains.kotlin.android.*version" \
+            . \
+            --include="*.gradle" \
+            --include="*.gradle.kts" \
+            || true
+
+          echo ""
+          echo "Mise a niveau AGP/Kotlin terminee"
+
+
+      # ==========================================================
+      # 10 - NAVIGATION SDK 7.9
+      # ==========================================================
+
+      - name: Installer Navigation SDK 7.9.0
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
@@ -158,58 +339,236 @@ jobs:
 
           APP_GRADLE="app/build.gradle"
 
-          echo "=== Dependances AVANT ==="
+          if [ ! -f "$APP_GRADLE" ]; then
+            echo "ERREUR : ce workflow attend app/build.gradle"
+            exit 1
+          fi
 
-          grep -n "play-services-maps" "$APP_GRADLE" || true
-
-          grep -n "navigation:" "$APP_GRADLE" || true
+          echo "=========================================="
+          echo "NAVIGATION SDK 7.9.0"
+          echo "=========================================="
 
           echo ""
+          echo "Dependances AVANT :"
 
+          grep -n \
+            -E \
+            "play-services-maps|navigation:" \
+            "$APP_GRADLE" \
+            || true
+
+          echo ""
           echo "Suppression de play-services-maps..."
 
-          sed -i "/play-services-maps/d" "$APP_GRADLE"
+          sed -i \
+            "/play-services-maps/d" \
+            "$APP_GRADLE"
 
-          echo "Ajout de Navigation SDK 7.9.0..."
+          echo ""
+          echo "Ajout de Navigation SDK..."
 
-          if ! grep -q "com.google.android.libraries.navigation:navigation" "$APP_GRADLE"; then
+          if ! grep -q \
+            "com.google.android.libraries.navigation:navigation" \
+            "$APP_GRADLE"; then
 
-            sed -i "/dependencies[[:space:]]*{/a\    implementation 'com.google.android.libraries.navigation:navigation:7.9.0'" "$APP_GRADLE"
+            sed -i \
+              "/dependencies[[:space:]]*{/a\    implementation 'com.google.android.libraries.navigation:navigation:7.9.0'" \
+              "$APP_GRADLE"
+
+          else
+
+            sed -i -E \
+              "s/com\.google\.android\.libraries\.navigation:navigation:[0-9.]+/com.google.android.libraries.navigation:navigation:7.9.0/g" \
+              "$APP_GRADLE"
 
           fi
 
           echo ""
-          echo "=== Dependances APRES ==="
+          echo "Dependances APRES :"
 
-          grep -n "navigation:" "$APP_GRADLE"
-
-          echo ""
+          grep -n \
+            -E \
+            "play-services-maps|navigation:" \
+            "$APP_GRADLE" \
+            || true
 
           if grep -q "play-services-maps" "$APP_GRADLE"; then
             echo "ERREUR : play-services-maps est encore present"
             exit 1
           fi
 
-          if ! grep -q "com.google.android.libraries.navigation:navigation:7.9.0" "$APP_GRADLE"; then
-            echo "ERREUR : Navigation SDK absent"
+          if ! grep -q \
+            "com.google.android.libraries.navigation:navigation:7.9.0" \
+            "$APP_GRADLE"; then
+
+            echo "ERREUR : Navigation SDK 7.9.0 absent"
             exit 1
+
           fi
 
-          echo "Migration Navigation SDK OK"
+          echo ""
+          echo "Navigation SDK 7.9.0 OK"
+
+
+      # ==========================================================
+      # 11 - DESUGARING REQUIS PAR NAVIGATION SDK
+      # ==========================================================
+
+      - name: Configurer le desugaring Navigation SDK
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          APP_GRADLE="app/build.gradle"
+
+          echo "=========================================="
+          echo "DESUGARING"
+          echo "=========================================="
+
+          # Ajout de la dependance desugar
+          if ! grep -q "desugar_jdk_libs_nio" "$APP_GRADLE"; then
+
+            sed -i \
+              "/dependencies[[:space:]]*{/a\    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'" \
+              "$APP_GRADLE"
+
+          fi
+
+          # Activation du desugaring
+          if grep -q "coreLibraryDesugaringEnabled" "$APP_GRADLE"; then
+
+            sed -i \
+              "s/coreLibraryDesugaringEnabled[[:space:]]*[a-zA-Z]*/coreLibraryDesugaringEnabled true/g" \
+              "$APP_GRADLE"
+
+          else
+
+            if grep -q "compileOptions[[:space:]]*{" "$APP_GRADLE"; then
+
+              sed -i \
+                "/compileOptions[[:space:]]*{/a\        coreLibraryDesugaringEnabled true" \
+                "$APP_GRADLE"
+
+            else
+
+              sed -i \
+                "/android[[:space:]]*{/a\    compileOptions {\n        coreLibraryDesugaringEnabled true\n    }" \
+                "$APP_GRADLE"
+
+            fi
+
+          fi
+
+          echo ""
+          echo "Verification desugar :"
+
+          grep -n \
+            -E \
+            "desugar_jdk_libs_nio|coreLibraryDesugaringEnabled" \
+            "$APP_GRADLE" \
+            || true
+
+          echo ""
+          echo "Desugaring configure"
+
+
+      # ==========================================================
+      # 12 - SDK ANDROID 36
+      # ==========================================================
+
+      - name: Verifier SDK Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          APP_GRADLE="app/build.gradle"
+
+          echo "=========================================="
+          echo "CONFIGURATION ANDROID"
+          echo "=========================================="
+
+          echo ""
+          echo "Configuration actuelle :"
+
+          grep -n \
+            -E \
+            "compileSdk|targetSdk|minSdk" \
+            "$APP_GRADLE" \
+            || true
+
+          echo ""
+
+          # compileSdk
+          sed -i -E \
+            's/compileSdk(Version)?[[:space:]]+[0-9]+/compileSdk 36/g' \
+            "$APP_GRADLE"
+
+          # targetSdk
+          sed -i -E \
+            's/targetSdk(Version)?[[:space:]]+[0-9]+/targetSdk 36/g' \
+            "$APP_GRADLE"
+
+          echo ""
+          echo "Configuration apres mise a niveau :"
+
+          grep -n \
+            -E \
+            "compileSdk|targetSdk|minSdk" \
+            "$APP_GRADLE" \
+            || true
+
+          echo ""
+          echo "SDK Android configure"
+
+
+      # ==========================================================
+      # 13 - VERIFIER ANDROID AUTO
+      # ==========================================================
 
       - name: Verifier Android Auto
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          echo "=== Android Auto ==="
+          echo "=========================================="
+          echo "ANDROID AUTO"
+          echo "=========================================="
 
-          find . -type f -name "NicoGPSCarService.java" -print
+          echo ""
+          echo "Service voiture :"
 
-          find . -type f -name "automotive_app_desc.xml" -print
+          find . \
+            -type f \
+            -name "NicoGPSCarService.java" \
+            -print \
+            || true
 
-          find . -type f -name "AndroidManifest.xml" -print
+          echo ""
+          echo "Description automotive :"
 
+          find . \
+            -type f \
+            -name "automotive_app_desc.xml" \
+            -print \
+            || true
+
+          echo ""
+          echo "Manifest :"
+
+          find . \
+            -type f \
+            -name "AndroidManifest.xml" \
+            -print \
+            || true
+
+          echo ""
           echo "Verification Android Auto terminee"
+
+
+      # ==========================================================
+      # 14 - GRADLE WRAPPER
+      # ==========================================================
 
       - name: Verifier Gradle
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -217,15 +576,15 @@ jobs:
         run: |
           set -e
 
-          echo "=== Gradle disponible ==="
+          echo "=========================================="
+          echo "GRADLE"
+          echo "=========================================="
 
           gradle --version
 
           echo ""
 
-          echo "=== Wrapper ==="
-
-          if [ -f "gradlew" ]; then
+          if [ -f gradlew ]; then
 
             chmod +x gradlew
 
@@ -234,21 +593,98 @@ jobs:
           else
 
             echo "gradlew absent"
+            echo "Generation du wrapper Gradle 8.13..."
 
-            echo "Generation du wrapper..."
-
-            gradle wrapper --gradle-version 8.13
+            gradle wrapper \
+              --gradle-version 8.13
 
             chmod +x gradlew
 
           fi
 
-          if [ ! -f "gradlew" ]; then
+          if [ ! -f gradlew ]; then
             echo "ERREUR : impossible de creer gradlew"
             exit 1
           fi
 
+          echo ""
           echo "gradlew OK"
+
+
+      # ==========================================================
+      # 15 - DIAGNOSTIC FINAL AVANT COMPILATION
+      # ==========================================================
+
+      - name: Diagnostic final
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "DIAGNOSTIC AVANT COMPILATION"
+          echo "=========================================="
+
+          echo ""
+          echo "Projet :"
+          pwd
+
+          echo ""
+          echo "AGP :"
+
+          grep -R \
+            -E \
+            "com.android.tools.build:gradle|com.android.application.*version" \
+            . \
+            --include="*.gradle" \
+            --include="*.gradle.kts" \
+            || true
+
+          echo ""
+          echo "Kotlin :"
+
+          grep -R \
+            -E \
+            "kotlin-gradle-plugin|org.jetbrains.kotlin.android.*version" \
+            . \
+            --include="*.gradle" \
+            --include="*.gradle.kts" \
+            || true
+
+          echo ""
+          echo "Navigation :"
+
+          grep -R \
+            "com.google.android.libraries.navigation:navigation" \
+            . \
+            --include="*.gradle" \
+            || true
+
+          echo ""
+          echo "Maps SDK direct :"
+
+          if grep -R \
+            "play-services-maps" \
+            app \
+            --include="*.gradle" \
+            --include="*.gradle.kts"; then
+
+            echo "ERREUR : Maps SDK direct encore present"
+            exit 1
+
+          else
+
+            echo "OK : aucun play-services-maps direct"
+
+          fi
+
+          echo ""
+          echo "Diagnostic termine"
+
+
+      # ==========================================================
+      # 16 - COMPILATION REELLE
+      # ==========================================================
 
       - name: COMPILATION NICO GPS
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -262,7 +698,11 @@ jobs:
 
           echo ""
 
-          ./gradlew clean assembleDebug --stacktrace
+          ./gradlew \
+            clean \
+            assembleDebug \
+            --stacktrace \
+            --warning-mode all
 
           echo ""
 
@@ -270,15 +710,26 @@ jobs:
           echo "       BUILD GRADLE TERMINE"
           echo "=========================================="
 
+
+      # ==========================================================
+      # 17 - VERIFICATION APK
+      # ==========================================================
+
       - name: VERIFIER OBLIGATOIREMENT L APK
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          echo "Recherche de l APK..."
+          echo "=========================================="
+          echo "RECHERCHE APK"
+          echo "=========================================="
 
-          APK=$(find app/build/outputs -type f -name "*.apk" -print -quit)
+          APK=$(find app/build/outputs \
+            -type f \
+            -name "*.apk" \
+            -print \
+            -quit)
 
           if [ -z "$APK" ]; then
 
@@ -287,7 +738,10 @@ jobs:
             echo "ERREUR : AUCUN APK GENERE"
             echo "=========================================="
 
-            find app/build -maxdepth 5 -type f | head -200
+            find app/build \
+              -maxdepth 6 \
+              -type f \
+              | head -250
 
             exit 1
 
@@ -300,7 +754,14 @@ jobs:
 
           echo "$APK"
 
+          echo ""
+
           ls -lh "$APK"
+
+
+      # ==========================================================
+      # 18 - PUBLICATION APK
+      # ==========================================================
 
       - name: Publier APK
         uses: actions/upload-artifact@v4
