@@ -1,4 +1,4 @@
-name: NicoGPS - Navigation SDK 7.9
+name: NicoGPS - BUILD Navigation SDK 7.9
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
             exit 1
           fi
 
-          echo "Cle Google detectee."
+          echo "Cle Google OK"
 
       - name: Installer Java 17
         uses: actions/setup-java@v5
@@ -31,12 +31,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Installer Gradle
+      - name: Installer Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
 
-      - name: Trouver le source NicoGPS 6.2.1
+      - name: Trouver le ZIP NicoGPS 6.2.1
         shell: bash
         run: |
           set -e
@@ -44,19 +44,27 @@ jobs:
           ZIP=$(find . -type f -iname "*6.2.1*.zip" -print -quit)
 
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun ZIP 6.2.1 trouve."
+            echo "ERREUR : aucun ZIP 6.2.1 trouve"
+
             echo ""
             echo "ZIP disponibles :"
             find . -type f -name "*.zip" -print
+
             exit 1
           fi
 
-          echo "Source selectionnee : $ZIP"
+          echo "======================================"
+          echo "ZIP SELECTIONNE"
+          echo "======================================"
+          echo "$ZIP"
+
+          rm -rf _nicogps_source
 
           mkdir -p _nicogps_source
 
           unzip -q "$ZIP" -d _nicogps_source
 
+          echo ""
           echo "Source extraite."
 
       - name: Trouver le projet Android
@@ -71,16 +79,33 @@ jobs:
           fi
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERREUR : aucun settings.gradle trouve."
+            echo "ERREUR : settings.gradle introuvable"
+
             echo ""
-            echo "Fichiers trouves dans le source :"
-            find _nicogps_source -type f | head -100
+            echo "Fichiers trouves :"
+
+            find _nicogps_source -type f | head -150
+
             exit 1
           fi
 
           ROOT=$(dirname "$SETTINGS")
 
-          echo "Projet Android : $ROOT"
+          if [ ! -f "$ROOT/app/build.gradle" ]; then
+            echo "ERREUR : app/build.gradle introuvable"
+
+            echo "Projet detecte : $ROOT"
+
+            find "$ROOT" -maxdepth 3 -type f | head -100
+
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "PROJET ANDROID RETENU"
+          echo "======================================"
+
+          echo "$ROOT"
 
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
@@ -90,18 +115,17 @@ jobs:
         run: |
           set -e
 
-          echo "=== Structure du projet ==="
+          echo "=== Structure ==="
 
           find . -maxdepth 3 -type f | sort | head -150
 
           echo ""
 
-          if [ ! -f "app/build.gradle" ]; then
-            echo "ERREUR : app/build.gradle introuvable."
-            exit 1
-          fi
+          test -f settings.gradle || test -f settings.gradle.kts
 
-          echo "app/build.gradle trouve."
+          test -f app/build.gradle
+
+          echo "Structure Android OK"
 
       - name: Activer AndroidX
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -123,11 +147,166 @@ jobs:
             echo "android.enableJetifier=true" >> gradle.properties
           fi
 
-          echo "=== AndroidX active ==="
-          cat gradle.properties
+          echo ""
+          echo "AndroidX OK"
 
       - name: Migrer vers Navigation SDK 7.9.0
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          set -
+          set -e
+
+          APP_GRADLE="app/build.gradle"
+
+          echo "=== Dependances AVANT ==="
+
+          grep -n "play-services-maps" "$APP_GRADLE" || true
+
+          grep -n "navigation:" "$APP_GRADLE" || true
+
+          echo ""
+
+          echo "Suppression de play-services-maps..."
+
+          sed -i "/play-services-maps/d" "$APP_GRADLE"
+
+          echo "Ajout de Navigation SDK 7.9.0..."
+
+          if ! grep -q "com.google.android.libraries.navigation:navigation" "$APP_GRADLE"; then
+
+            sed -i "/dependencies[[:space:]]*{/a\    implementation 'com.google.android.libraries.navigation:navigation:7.9.0'" "$APP_GRADLE"
+
+          fi
+
+          echo ""
+          echo "=== Dependances APRES ==="
+
+          grep -n "navigation:" "$APP_GRADLE"
+
+          echo ""
+
+          if grep -q "play-services-maps" "$APP_GRADLE"; then
+            echo "ERREUR : play-services-maps est encore present"
+            exit 1
+          fi
+
+          if ! grep -q "com.google.android.libraries.navigation:navigation:7.9.0" "$APP_GRADLE"; then
+            echo "ERREUR : Navigation SDK absent"
+            exit 1
+          fi
+
+          echo "Migration Navigation SDK OK"
+
+      - name: Verifier Android Auto
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          echo "=== Android Auto ==="
+
+          find . -type f -name "NicoGPSCarService.java" -print
+
+          find . -type f -name "automotive_app_desc.xml" -print
+
+          find . -type f -name "AndroidManifest.xml" -print
+
+          echo "Verification Android Auto terminee"
+
+      - name: Verifier Gradle
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=== Gradle disponible ==="
+
+          gradle --version
+
+          echo ""
+
+          echo "=== Wrapper ==="
+
+          if [ -f "gradlew" ]; then
+
+            chmod +x gradlew
+
+            echo "gradlew deja present"
+
+          else
+
+            echo "gradlew absent"
+
+            echo "Generation du wrapper..."
+
+            gradle wrapper --gradle-version 8.13
+
+            chmod +x gradlew
+
+          fi
+
+          if [ ! -f "gradlew" ]; then
+            echo "ERREUR : impossible de creer gradlew"
+            exit 1
+          fi
+
+          echo "gradlew OK"
+
+      - name: COMPILATION NICO GPS
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "       COMPILATION REELLE NICO GPS"
+          echo "=========================================="
+
+          echo ""
+
+          ./gradlew clean assembleDebug --stacktrace
+
+          echo ""
+
+          echo "=========================================="
+          echo "       BUILD GRADLE TERMINE"
+          echo "=========================================="
+
+      - name: VERIFIER OBLIGATOIREMENT L APK
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "Recherche de l APK..."
+
+          APK=$(find app/build/outputs -type f -name "*.apk" -print -quit)
+
+          if [ -z "$APK" ]; then
+
+            echo ""
+            echo "=========================================="
+            echo "ERREUR : AUCUN APK GENERE"
+            echo "=========================================="
+
+            find app/build -maxdepth 5 -type f | head -200
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "APK TROUVE"
+          echo "=========================================="
+
+          echo "$APK"
+
+          ls -lh "$APK"
+
+      - name: Publier APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NicoGPS-Navigation-7.9-AndroidAuto
+          path: |
+            ${{ env.PROJECT_ROOT }}/app/build/outputs/**/*.apk
+            ${{ env.PROJECT_ROOT }}/app/build/outputs/*.apk
+          if-no-files-found: error
