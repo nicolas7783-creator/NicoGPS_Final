@@ -42,21 +42,57 @@ jobs:
         with:
           gradle-version: "8.13"
 
+      - name: Trouver et extraire le source NicoGPS
+        shell: bash
+        run: |
+          set -e
+
+          echo "Recherche du source NicoGPS..."
+
+          ZIP=""
+
+          for pattern in \
+            "NicoGPS-6.2.1-Google-Maps-FINAL*.zip" \
+            "NicoGPS6.2.1_GoogleMaps_fix_build*.zip" \
+            "NicoGPS6.2.1*GoogleMaps*.zip"
+          do
+            ZIP=$(find . -type f -iname "$pattern" -print -quit)
+            if [ -n "$ZIP" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : source NicoGPS 6.2.1 introuvable."
+            echo ""
+            echo "ZIP disponibles dans le dépôt :"
+            find . -type f -iname "*.zip" -print
+            exit 1
+          fi
+
+          echo "SOURCE TROUVÉE : $ZIP"
+
+          rm -rf nicogps_source
+          mkdir -p nicogps_source
+
+          unzip -o "$ZIP" -d nicogps_source
+
+          echo "Source décompressée."
+
       - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
 
-          echo "Recherche du projet Android..."
-
-          SETTINGS=$(find . -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+          SETTINGS=$(find nicogps_source -type f \
+            -name "settings.gradle" -o -name "settings.gradle.kts" \
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERREUR : aucun settings.gradle trouvé."
-            echo "Contenu du dépôt :"
-            find . -maxdepth 4 -type f | head -200
+            echo "ERREUR : settings.gradle introuvable après extraction."
+            echo ""
+            echo "Fichiers trouvés :"
+            find nicogps_source -maxdepth 5 -type f | head -200
             exit 1
           fi
 
@@ -71,16 +107,19 @@ jobs:
         run: |
           set -e
 
-          echo "Projet utilisé : $PROJECT_DIR"
+          echo "Projet : $PROJECT_DIR"
 
           if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
              [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+
             echo "ERREUR : app/build.gradle introuvable."
+
             find "$PROJECT_DIR" -maxdepth 4 -type f | sort
+
             exit 1
           fi
 
-          echo "Fichiers Android trouvés."
+          echo "Projet Android valide."
 
       - name: Activer AndroidX
         shell: bash
@@ -115,7 +154,7 @@ jobs:
           grep -q "com.google.android.libraries.navigation:navigation" "$GRADLE_FILE"
 
           if grep -q "play-services-maps" "$GRADLE_FILE"; then
-            echo "ERREUR : play-services-maps ne doit pas être utilisé directement."
+            echo "ERREUR : play-services-maps détecté."
             exit 1
           fi
 
@@ -124,84 +163,4 @@ jobs:
       - name: Injecter la clé Google Maps
         shell: bash
         run: |
-          set -e
-
-          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
-          if [ ! -f "$MANIFEST" ]; then
-            echo "ERREUR : AndroidManifest.xml introuvable."
-            exit 1
-          fi
-
-          python3 - "$MANIFEST" "$MAPS_API_KEY" <<'PY'
-          import sys
-          from pathlib import Path
-
-          manifest = Path(sys.argv[1])
-          key = sys.argv[2]
-
-          text = manifest.read_text(encoding="utf-8")
-
-          text = text.replace("${MAPS_API_KEY}", key)
-          text = text.replace("${GOOGLE_MAPS_API_KEY}", key)
-
-          manifest.write_text(text, encoding="utf-8")
-
-          print("Clé Google Maps injectée.")
-          PY
-
-      - name: Vérifier Android Auto
-        shell: bash
-        run: |
-          set -e
-
-          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
-          DESC=$(find "$PROJECT_DIR" \
-            -type f \
-            -name "automotive_app_desc.xml" \
-            -print -quit)
-
-          if [ -z "$DESC" ]; then
-            echo "ERREUR : automotive_app_desc.xml introuvable."
-            exit 1
-          fi
-
-          grep -q "androidx.car.app.category.NAVIGATION" "$MANIFEST"
-          grep -q "com.google.android.gms.car.application" "$MANIFEST"
-
-          echo "Android Auto détecté."
-
-      - name: Construire APK debug
-        shell: bash
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -e
-
-          gradle --no-daemon --stacktrace :app:assembleDebug
-
-      - name: Vérifier APK
-        shell: bash
-        run: |
-          set -e
-
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
-            -type f \
-            -name "*.apk" \
-            -print -quit)
-
-          if [ -z "$APK" ]; then
-            echo "ERREUR : APK introuvable."
-            exit 1
-          fi
-
-          echo "APK généré : $APK"
-
-          keytool -printcert -jarfile "$APK" || true
-
-      - name: Publier APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: NicoGPS-Navigation-7.9-AndroidAuto
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          set -
