@@ -55,10 +55,12 @@ jobs:
         run: |
           set -e
 
-          SETTINGS=$(find _nicogps_source -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit)
+          SETTINGS=$(find _nicogps_source -type f -name "settings.gradle" -o -name "settings.gradle.kts" -print -quit)
 
           if [ -z "$SETTINGS" ]; then
             echo "ERREUR : settings.gradle introuvable"
+            echo "Contenu du source :"
+            find _nicogps_source -maxdepth 5 -type f | head -100
             exit 1
           fi
 
@@ -66,6 +68,22 @@ jobs:
 
           echo "Projet Android : $ROOT"
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Verifier la structure Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=== Structure du projet ==="
+          find . -maxdepth 3 -type f | sort | head -150
+
+          if [ ! -f "app/build.gradle" ]; then
+            echo "ERREUR : app/build.gradle introuvable"
+            exit 1
+          fi
+
+          echo "app/build.gradle trouve."
 
       - name: Activer AndroidX
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -84,20 +102,21 @@ jobs:
             echo "android.enableJetifier=true" >> gradle.properties
           fi
 
+          echo "=== gradle.properties ==="
+          cat gradle.properties
+
       - name: Migrer vers Navigation SDK 7.9.0
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          APP_GRADLE=$(find . -type f -path "*/app/build.gradle" -print -quit)
-
-          if [ -z "$APP_GRADLE" ]; then
-            echo "ERREUR : app/build.gradle introuvable"
-            exit 1
-          fi
+          APP_GRADLE="app/build.gradle"
 
           echo "Fichier Gradle : $APP_GRADLE"
+
+          echo "=== Avant migration ==="
+          grep -nE "play-services-maps|navigation:" "$APP_GRADLE" || true
 
           sed -i "/play-services-maps/d" "$APP_GRADLE"
 
@@ -105,76 +124,82 @@ jobs:
             sed -i "/dependencies[[:space:]]*{/a\    implementation 'com.google.android.libraries.navigation:navigation:7.9.0'" "$APP_GRADLE"
           fi
 
-          echo "Dependances Navigation :"
-          grep -n "navigation:" "$APP_GRADLE" || true
+          echo "=== Apres migration ==="
+          grep -nE "play-services-maps|navigation:" "$APP_GRADLE" || true
 
           if grep -q "play-services-maps" "$APP_GRADLE"; then
             echo "ERREUR : ancienne dependance Maps encore presente"
             exit 1
           fi
 
-      - name: Verifier Android Auto
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          echo "Recherche des composants Android Auto..."
+          if ! grep -q "com.google.android.libraries.navigation:navigation:7.9.0" "$APP_GRADLE"; then
+            echo "ERREUR : Navigation SDK 7.9.0 non ajoute"
+            exit 1
+          fi
 
-          find . -type f \
-            \( -name "NicoGPSCarService.java" \
-            -o -name "automotive_app_desc.xml" \
-            -o -name "AndroidManifest.xml" \) \
-            -print
-
-      - name: Afficher les references Maps
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          echo "References Maps presentes dans le code :"
-
-          grep -RIn \
-            --include="*.java" \
-            --include="*.kt" \
-            "com.google.android.gms.maps" \
-            app/src 2>/dev/null || true
-
-      - name: Compiler NicoGPS
+      - name: Configurer la compilation Java
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          chmod +x ./gradlew
+          APP_GRADLE="app/build.gradle"
 
-          ./gradlew clean assembleDebug --stacktrace
+          if ! grep -q "sourceCompatibility" "$APP_GRADLE"; then
+            sed -i '/android[[:space:]]*{/a\
+              compileOptions {\
+                  sourceCompatibility JavaVersion.VERSION_17\
+                  targetCompatibility JavaVersion.VERSION_17\
+              }' "$APP_GRADLE"
+          fi
 
-      - name: Verifier APK
+          echo "Configuration Java verifiee."
+
+      - name: Configurer la cle Google Maps
         working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         shell: bash
         run: |
-          echo "APK generees :"
+          set -e
 
-          find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
+          MANIFEST=$(find . -type f -path "*/src/main/AndroidManifest.xml" -print -quit)
 
-          APK=$(find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print -quit)
-
-          if [ -z "$APK" ]; then
-            echo "ERREUR : aucun APK genere"
+          if [ -z "$MANIFEST" ]; then
+            echo "ERREUR : AndroidManifest.xml introuvable"
             exit 1
           fi
 
-          echo "APK trouve : $APK"
+          echo "Manifest : $MANIFEST"
 
-      - name: Publier APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: NicoGPS-Navigation-7.9-AndroidAuto
-          path: |
-            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/**/*.apk
-            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/*.apk
-          if-no-files-found: error
+          python3 - "$MANIFEST" "$GOOGLE_MAPS_API_KEY" <<'PY'
+          import sys
+          import re
+          from pathlib import Path
+
+          manifest = Path(sys.argv[1])
+          api_key = sys.argv[2]
+
+          text = manifest.read_text(encoding="utf-8")
+
+          new_meta = (
+              '<meta-data '
+              'android:name="com.google.android.geo.API_KEY" '
+              f'android:value="{api_key}" />'
+          )
+
+          pattern = (
+              r'<meta-data\s+'
+              r'android:name="com\.google\.android\.geo\.API_KEY"\s+'
+              r'android:value="[^"]*"\s*/>'
+          )
+
+          if re.search(pattern, text):
+              text = re.sub(pattern, new_meta, text)
+          elif "</application>" in text:
+              text = text.replace(
+                  "</application>",
+                  "        " + new_meta + "\n    </application>"
+              )
+          else:
+              print("
