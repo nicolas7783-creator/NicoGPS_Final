@@ -1,4 +1,4 @@
-name: Construire NicoGPS 7.9 Navigation Google Android Auto FIX4
+name: Construire NicoGPS 7.9 Navigation Google Android Auto FIX5
 
 on:
   workflow_dispatch:
@@ -31,164 +31,110 @@ jobs:
 
       - name: Vérifier la clé Google Maps
         run: |
-          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
-            exit 1
-          fi
+          test -n "$GOOGLE_MAPS_API_KEY" || { echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."; exit 1; }
           echo "Clé Google Maps détectée."
 
-      - name: Trouver et extraire la source NicoGPS FIX1
+      - name: Trouver la source FIX2
         shell: bash
         run: |
-          ZIP=$(find . -type f -name 'NicoGPS_FULL_7.9_GOOGLE_NAVIGATION_ANDROID_AUTO_FIX1.zip' -print -quit)
-
+          ZIP=$(find . -maxdepth 5 -type f -name 'NicoGPS_FULL_7.9_GOOGLE_NAVIGATION_ANDROID_AUTO_FIX2.zip' -print -quit)
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : ZIP FIX1 introuvable."
+            echo "ERREUR : source FIX2 introuvable."
             find . -type f -name '*.zip' -print
             exit 1
           fi
-
-          echo "Source : $ZIP"
           rm -rf build-source
-          mkdir -p build-source
+          mkdir build-source
           unzip -q "$ZIP" -d build-source
+          echo "Source : $ZIP"
 
-      - name: Trouver le dossier Android
-        id: project
+      - name: Normaliser le projet
         shell: bash
         run: |
-          SETTINGS=$(find build-source -type f -name 'settings.gradle' -print -quit)
-
-          if [ -z "$SETTINGS" ]; then
-            echo "ERREUR : settings.gradle introuvable."
-            find build-source -maxdepth 5 -type f | head -100
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$SETTINGS")
-          echo "Projet Android : $PROJECT_DIR"
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          if [ -f build-source/settings.gradle ]; then exit 0; fi
+          SETTINGS=$(find build-source -mindepth 2 -maxdepth 5 -type f -name 'settings.gradle' -print -quit)
+          test -n "$SETTINGS" || { echo "ERREUR : settings.gradle introuvable."; exit 1; }
+          ROOT=$(dirname "$SETTINGS")
+          shopt -s dotglob
+          cp -a "$ROOT"/. build-source/
 
       - name: Nettoyer les anciennes options Gradle
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: build-source
         shell: bash
         run: |
           touch gradle.properties
-
           sed -i '/^[[:space:]]*android\.useDeprecatedNdk[[:space:]]*=/d' gradle.properties
-
-          grep -q '^android.useAndroidX=true' gradle.properties || \
-            echo 'android.useAndroidX=true' >> gradle.properties
-
-          grep -q '^android.enableJetifier=true' gradle.properties || \
-            echo 'android.enableJetifier=true' >> gradle.properties
-
+          grep -q '^android.useAndroidX=true' gradle.properties || echo 'android.useAndroidX=true' >> gradle.properties
+          grep -q '^android.enableJetifier=true' gradle.properties || echo 'android.enableJetifier=true' >> gradle.properties
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          p = Path('app/build.gradle')
-          s = p.read_text(encoding='utf-8')
-
-          # Supprime uniquement un bloc dexOptions simple.
-          s = re.sub(
-              r'(?ms)^\s*dexOptions\s*\{\s*javaMaxHeapSize\s+[\'\"]4g[\'\"]\s*\}\s*\n?',
-              '',
-              s,
-          )
-
-          # Supprime uniquement le vieux bloc repositories { google() } local.
-          s = re.sub(
-              r'(?m)^\s*repositories\s*\{\s*google\(\)\s*\}\s*\n?',
-              '',
-              s,
-          )
-
+          p=Path('app/build.gradle')
+          s=p.read_text(encoding='utf-8')
+          s=re.sub(r'(?ms)^\s*dexOptions\s*\{.*?^\s*\}\s*\n', '\n', s, count=1)
+          s=re.sub(r'(?ms)^repositories\s*\{\s*google\(\)\s*\}\s*\n', '\n', s, count=1)
           p.write_text(s, encoding='utf-8')
           PY
-
-          echo "--- anciennes options ---"
-          ! grep -n 'android.useDeprecatedNdk' gradle.properties
-          ! grep -nE '^\s*repositories\s*\{' app/build.gradle
-          ! grep -nE '^\s*dexOptions\s*\{' app/build.gradle
-          echo "Nettoyage OK."
+          ! grep -q 'android.useDeprecatedNdk' gradle.properties
+          ! grep -qE '^repositories[[:space:]]*\{' app/build.gradle
+          ! grep -qE '^\s*dexOptions[[:space:]]*\{' app/build.gradle
+          echo "Anciennes options supprimées."
 
       - name: Vérifier Navigation SDK 7.9.0
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: build-source
         shell: bash
         run: |
-          echo "--- Navigation SDK ---"
-          grep -nE 'navSdkVersion.*7\.9\.0' app/build.gradle
-          grep -n 'com.google.android.libraries.navigation:navigation:' app/build.gradle
-
-          if ! grep -Eq 'navSdkVersion[[:space:]]*=[[:space:]]*[\"'\'' ]*7\.9\.0' app/build.gradle; then
-            echo "ERREUR : version Navigation SDK 7.9.0 non détectée."
-            exit 1
-          fi
-
-          if ! grep -q 'com.google.android.libraries.navigation:navigation:' app/build.gradle; then
-            echo "ERREUR : dépendance Navigation SDK absente."
-            exit 1
-          fi
-
-          if grep -q 'play-services-maps' app/build.gradle; then
-            echo "ERREUR : play-services-maps ne doit pas être utilisé directement."
-            exit 1
-          fi
-
+          grep -Eq 'navSdkVersion[[:space:]]*=[[:space:]]*["'"']7\.9\.0["'"']' app/build.gradle || { echo "ERREUR : Navigation SDK 7.9.0 absent."; exit 1; }
+          grep -q 'com.google.android.libraries.navigation:navigation:' app/build.gradle || { echo "ERREUR : dépendance Navigation SDK absente."; exit 1; }
+          ! grep -q 'play-services-maps' app/build.gradle || { echo "ERREUR : play-services-maps présent."; exit 1; }
           echo "Navigation SDK 7.9.0 OK."
 
       - name: Vérifier Android SDK 36
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: build-source
         run: |
           grep -q 'compileSdk 36' app/build.gradle
           grep -q 'targetSdk 36' app/build.gradle
-          echo "compileSdk 36 / targetSdk 36 OK."
+          echo "Android SDK 36 OK."
 
       - name: Injecter la clé Google Maps
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: build-source
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import os
-
-          p = Path('app/src/main/AndroidManifest.xml')
-          if not p.exists():
-              raise SystemExit('ERREUR : AndroidManifest.xml introuvable.')
-
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('${MAPS_API_KEY}', os.environ['GOOGLE_MAPS_API_KEY'])
+          p=Path('app/src/main/AndroidManifest.xml')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('${MAPS_API_KEY}', os.environ['GOOGLE_MAPS_API_KEY'])
           p.write_text(s, encoding='utf-8')
-          print('Clé Google Maps injectée.')
           PY
+          echo "Clé injectée."
 
       - name: Vérifier Android Auto
-        working-directory: ${{ steps.project.outputs.project_dir }}
-        shell: bash
+        working-directory: build-source
         run: |
           test -f app/src/main/res/xml/automotive_app_desc.xml
           grep -q 'androidx.car.app.category.NAVIGATION' app/src/main/AndroidManifest.xml
           grep -q 'com.google.android.gms.car.application' app/src/main/AndroidManifest.xml
+          grep -q 'NavigationViewForAuto' app/src/main/java/com/nicogps/app/NicoGPSCarService.java
           echo "Android Auto OK."
 
       - name: Construire APK debug
-        working-directory: ${{ steps.project.outputs.project_dir }}
-        run: |
-          gradle --no-daemon --stacktrace :app:assembleDebug
+        working-directory: build-source
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Vérifier APK et SHA-1
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: build-source
         shell: bash
         run: |
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)
-          test -n "$APK"
+          test -n "$APK" || { echo "ERREUR : APK introuvable."; exit 1; }
           echo "APK généré : $APK"
           keytool -printcert -jarfile "$APK" || true
 
       - name: Publier APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-7.9-Navigation-AndroidAuto-FIX4
-          path: ${{ steps.project.outputs.project_dir }}/app/build/outputs/apk/debug/*.apk
+          name: NicoGPS-7.9-Navigation-AndroidAuto-FIX5
+          path: build-source/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
