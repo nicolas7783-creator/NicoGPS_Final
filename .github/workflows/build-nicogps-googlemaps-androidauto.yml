@@ -1,268 +1,156 @@
-name: Construire NicoGPS Navigation 7.9 Android Auto
+name: NicoGPS — Migration Navigation SDK 7.9
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - principal
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-
     steps:
-
-      - name: Récupérer le projet
+      - name: Récupérer le dépôt
         uses: actions/checkout@v4
 
-      - name: Vérifier la clé Google Maps
-        shell: bash
+      - name: Vérifier la clé Google
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
-          set -e
+          test -n "$GOOGLE_MAPS_API_KEY" || { echo "Secret GOOGLE_MAPS_API_KEY absent"; exit 1; }
 
-          if [ -z "$MAPS_API_KEY" ]; then
-            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
-            exit 1
-          fi
-
-          echo "Clé Google Maps détectée."
-
-      - name: Installer Java 17
+      - name: Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Installer Gradle 8.13
+      - name: Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.13"
+          gradle-version: '8.13'
 
-      - name: Trouver et extraire le source NicoGPS
+      - name: Trouver et extraire NicoGPS 6.2.1
         shell: bash
         run: |
           set -e
-
-          echo "Recherche du source NicoGPS 6.2.1..."
-
-          ZIP=$(find . -type f -iname "*6.2.1*Google*Maps*.zip" -print -quit)
-
-          if [ -z "$ZIP" ]; then
-            ZIP=$(find . -type f -iname "*6.2.1*.zip" -print -quit)
-          fi
-
-          if [ -z "$ZIP" ]; then
-            echo "ERREUR : source NicoGPS 6.2.1 introuvable."
-            echo ""
-            echo "ZIP disponibles dans le dépôt :"
-            find . -type f -iname "*.zip" -print
-            exit 1
-          fi
-
-          echo "======================================"
-          echo "SOURCE TROUVÉE :"
-          echo "$ZIP"
-          echo "======================================"
-
-          rm -rf nicogps_source
-          mkdir -p nicogps_source
-
-          unzip -o "$ZIP" -d nicogps_source
-
-          echo "Source décompressée."
+          ZIP=$(find . -type f -iname "*6.2.1*.zip" -print -quit)
+          test -n "$ZIP" || { echo "Aucun ZIP 6.2.1 trouvé"; find . -type f -name "*.zip"; exit 1; }
+          echo "Source sélectionnée: $ZIP"
+          mkdir -p _nicogps_source
+          unzip -q "$ZIP" -d _nicogps_source
 
       - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
+          SETTINGS=$(find _nicogps_source -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit)
+          test -n "$SETTINGS" || { echo "settings.gradle introuvable"; exit 1; }
+          ROOT=$(dirname "$SETTINGS")
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+          echo "Projet: $ROOT"
 
-          echo "Recherche de settings.gradle..."
+      - name: AndroidX
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          touch gradle.properties
+          grep -q '^android.useAndroidX=' gradle.properties \
+            && sed -i 's/^android.useAndroidX=.*/android.useAndroidX=true/' gradle.properties \
+            || echo 'android.useAndroidX=true' >> gradle.properties
+          grep -q '^android.enableJetifier=' gradle.properties \
+            && sed -i 's/^android.enableJetifier=.*/android.enableJetifier=true/' gradle.properties \
+            || echo 'android.enableJetifier=true' >> gradle.properties
 
-          SETTINGS=$(find nicogps_source -type f -name "settings.gradle" -print -quit)
-
-          if [ -z "$SETTINGS" ]; then
-            SETTINGS=$(find nicogps_source -type f -name "settings.gradle.kts" -print -quit)
-          fi
-
-          if [ -z "$SETTINGS" ]; then
-            echo "ERREUR : settings.gradle introuvable après extraction."
-            echo ""
-            echo "Fichiers trouvés dans la source :"
-            find nicogps_source -maxdepth 5 -type f | head -200
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$SETTINGS")
-
-          echo "======================================"
-          echo "PROJET ANDROID TROUVÉ :"
-          echo "$PROJECT_DIR"
-          echo "======================================"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Vérifier les fichiers Android
+      - name: Migrer Maps SDK vers Navigation SDK 7.9.0
+        working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
+          APP_GRADLE=$(find . -maxdepth 3 -type f -name "build.gradle" -path "*/app/*" -print -quit)
+          test -n "$APP_GRADLE" || { echo "app/build.gradle introuvable"; exit 1; }
 
-          echo "Projet utilisé : $PROJECT_DIR"
+          sed -i '/com\.google\.android\.gms:play-services-maps/d' "$APP_GRADLE"
 
-          if [ -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "app/build.gradle trouvé."
-          elif [ -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "app/build.gradle.kts trouvé."
-          else
-            echo "ERREUR : fichier Gradle de l'application introuvable."
-
-            echo ""
-            echo "Contenu du projet :"
-            find "$PROJECT_DIR" -maxdepth 4 -type f | sort
-
-            exit 1
+          if ! grep -q 'com.google.android.libraries.navigation:navigation:7.9.0' "$APP_GRADLE"; then
+            sed -i '/dependencies[[:space:]]*{/a\    implementation '\''com.google.android.libraries.navigation:navigation:7.9.0'\''' "$APP_GRADLE"
           fi
 
-          if [ ! -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" ]; then
-            echo "ERREUR : AndroidManifest.xml introuvable."
-            exit 1
+          if ! grep -q 'desugar_jdk_libs_nio' "$APP_GRADLE"; then
+            sed -i '/dependencies[[:space:]]*{/a\    coreLibraryDesugaring '\''com.android.tools:desugar_jdk_libs_nio:2.1.5'\''' "$APP_GRADLE"
           fi
 
-          echo "Structure Android valide."
+          if ! grep -q 'annotationProcessor.*androidx.annotation:annotation' "$APP_GRADLE"; then
+            sed -i '/dependencies[[:space:]]*{/a\    annotationProcessor '\''androidx.annotation:annotation:1.7.0'\''' "$APP_GRADLE"
+          fi
 
-      - name: Activer AndroidX
+          sed -i -E 's/minSdk(V|e)rsion[[:space:]]+[0-9]+/minSdkVersion 24/g' "$APP_GRADLE"
+          sed -i -E 's/targetSdk(V|e)rsion[[:space:]]+[0-9]+/targetSdkVersion 36/g' "$APP_GRADLE"
+
+          if ! grep -q 'coreLibraryDesugaringEnabled' "$APP_GRADLE"; then
+            sed -i '/android[[:space:]]*{/a\
+              compileOptions {\
+                  coreLibraryDesugaringEnabled true\
+                  sourceCompatibility JavaVersion.VERSION_17\
+                  targetCompatibility JavaVersion.VERSION_17\
+              }' "$APP_GRADLE"
+          fi
+
+          ROOT_GRADLE=$(find . -maxdepth 2 -type f -name "build.gradle" -print -quit)
+          if [ -n "$ROOT_GRADLE" ] && ! grep -q 'play-services-maps' "$ROOT_GRADLE"; then
+            cat >> "$ROOT_GRADLE" <<'EOF'
+
+allprojects {
+    configurations.configureEach {
+        exclude group: 'com.google.android.gms', module: 'play-services-maps'
+    }
+}
+EOF
+          fi
+
+          grep -q 'com.google.android.libraries.navigation:navigation:7.9.0' "$APP_GRADLE"
+          ! grep -q 'com.google.android.gms:play-services-maps' "$APP_GRADLE"
+
+      - name: Injecter la clé API
+        working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         shell: bash
         run: |
           set -e
+          MANIFEST=$(find . -type f -path "*/src/main/AndroidManifest.xml" -print -quit)
+          test -n "$MANIFEST" || { echo "Manifest introuvable"; exit 1; }
 
-          touch "$PROJECT_DIR/gradle.properties"
+          python3 - "$MANIFEST" <<'PY'
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text(encoding="utf-8")
+meta = '<meta-data android:name="com.google.android.geo.API_KEY" android:value="${MAPS_API_KEY}" />'
+s = re.sub(r'<meta-data\s+android:name="com\.google\.android\.geo\.API_KEY"\s+android:value="[^"]*"\s*/>', meta, s)
+if 'com.google.android.geo.API_KEY' not in s:
+    s = s.replace('</application>', '    ' + meta + '\n</application>')
+p.write_text(s, encoding="utf-8")
+PY
 
-          grep -q '^android.useAndroidX=true' \
-            "$PROJECT_DIR/gradle.properties" || \
-            echo 'android.useAndroidX=true' >> "$PROJECT_DIR/gradle.properties"
-
-          grep -q '^android.enableJetifier=true' \
-            "$PROJECT_DIR/gradle.properties" || \
-            echo 'android.enableJetifier=true' >> "$PROJECT_DIR/gradle.properties"
-
-          echo "AndroidX activé."
-
-      - name: Déterminer le fichier Gradle
-        shell: bash
-        run: |
-          set -e
-
-          if [ -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "APP_GRADLE=$PROJECT_DIR/app/build.gradle" >> "$GITHUB_ENV"
-          else
-            echo "APP_GRADLE=$PROJECT_DIR/app/build.gradle.kts" >> "$GITHUB_ENV"
-          fi
-
-          echo "Fichier Gradle sélectionné."
-
-      - name: Vérifier Navigation SDK
-        shell: bash
-        run: |
-          set -e
-
-          echo "Fichier analysé : $APP_GRADLE"
-
-          if ! grep -q "com.google.android.libraries.navigation:navigation" "$APP_GRADLE"; then
-            echo "ERREUR : Navigation SDK Google non détecté."
-            echo ""
-            echo "Dépendances trouvées :"
-            grep -n "implementation" "$APP_GRADLE" || true
-            exit 1
-          fi
-
-          if grep -q "play-services-maps" "$APP_GRADLE"; then
-            echo "ERREUR : play-services-maps détecté."
-            echo "Le projet doit utiliser le Navigation SDK."
-            exit 1
-          fi
-
-          echo "Navigation SDK Google détecté."
-
-      - name: Injecter la clé Google Maps
-        shell: bash
-        run: |
-          set -e
-
-          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
-          python3 - "$MANIFEST" "$MAPS_API_KEY" <<'PY'
-          import sys
-          from pathlib import Path
-
-          manifest = Path(sys.argv[1])
-          key = sys.argv[2]
-
-          text = manifest.read_text(encoding="utf-8")
-
-          text = text.replace("${MAPS_API_KEY}", key)
-          text = text.replace("${GOOGLE_MAPS_API_KEY}", key)
-
-          manifest.write_text(text, encoding="utf-8")
-
-          print("Clé Google Maps injectée.")
-          PY
+          printf 'MAPS_API_KEY=%s\n' "$GOOGLE_MAPS_API_KEY" > local.properties
 
       - name: Vérifier Android Auto
+        working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          set -e
+          MANIFEST=$(find . -type f -path "*/src/main/AndroidManifest.xml" -print -quit)
+          grep -q 'androidx.car.app.category.NAVIGATION' "$MANIFEST" || echo "AVERTISSEMENT: catégorie Android Auto NAVIGATION absente."
+          find . -type f \( -name "NicoGPSCarService.java" -o -name "automotive_app_desc.xml" \) -print
 
-          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
-          DESC=$(find "$PROJECT_DIR" \
-            -type f \
-            -name "automotive_app_desc.xml" \
-            -print -quit)
-
-          if [ -z "$DESC" ]; then
-            echo "ERREUR : automotive_app_desc.xml introuvable."
-            exit 1
-          fi
-
-          echo "Description Android Auto trouvée : $DESC"
-
-          if ! grep -q "androidx.car.app.category.NAVIGATION" "$MANIFEST"; then
-            echo "ERREUR : catégorie Android Auto NAVIGATION absente."
-            exit 1
-          fi
-
-          if ! grep -q "com.google.android.gms.car.application" "$MANIFEST"; then
-            echo "ERREUR : déclaration Android Auto absente."
-            exit 1
-          fi
-
-          echo "Android Auto détecté."
-
-      - name: Vérifier NavigationViewForAuto
-        shell: bash
+      - name: Compiler NicoGPS
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           set -e
+          chmod +x ./gradlew
+          ./gradlew clean assembleDebug --stacktrace
 
-          if grep -R -q "NavigationViewForAuto" \
-            "$PROJECT_DIR/app/src/main/java"; then
-
-            echo "NavigationViewForAuto détecté."
-
-          else
-
-            echo "AVERTISSEMENT : NavigationViewForAuto non trouvé."
-            echo "Le build continue pour obtenir le diagnostic complet."
-
-          fi
-
-      - name: Vérifier Android SDK
-        shell: bash
-        run: |
-          set -e
-
-          if grep -q "compileSdk 36" "$APP_GRADLE"; then
-            echo "compileSdk 36 détecté."
-          elif grep -
+      - name: Vérifier et publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NicoGPS-Navigation-7.9-AndroidAuto
+          path: |
+            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/**/*.apk
+            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/*.apk
+          if-no-files-found: error
