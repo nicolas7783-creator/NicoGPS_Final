@@ -15,6 +15,7 @@ jobs:
       MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
 
     steps:
+
       - name: Récupérer le projet
         uses: actions/checkout@v4
 
@@ -22,7 +23,12 @@ jobs:
         shell: bash
         run: |
           set -e
-          test -n "$MAPS_API_KEY"
+
+          if [ -z "$MAPS_API_KEY" ]; then
+            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
+            exit 1
+          fi
+
           echo "Clé Google Maps détectée."
 
       - name: Installer Java 17
@@ -36,34 +42,166 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Vérifier la base Navigation SDK
+      - name: Trouver le projet Android
         shell: bash
         run: |
           set -e
-          grep -q "navigation:7.9.0" app/build.gradle
-          grep -q "compileSdk 36" app/build.gradle
-          grep -q "targetSdk 36" app/build.gradle
-          ! grep -q "play-services-maps" app/build.gradle
-          grep -q "android.useAndroidX=true" gradle.properties
-          echo "Base Navigation SDK 7.9.0 OK."
 
-      - name: Construire APK debug
+          echo "Recherche du projet Android..."
+
+          SETTINGS=$(find . -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -print -quit)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERREUR : aucun settings.gradle trouvé."
+            echo "Contenu du dépôt :"
+            find . -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          echo "Projet Android trouvé : $PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Vérifier les fichiers Android
+        shell: bash
         run: |
           set -e
+
+          echo "Projet utilisé : $PROJECT_DIR"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
+             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERREUR : app/build.gradle introuvable."
+            find "$PROJECT_DIR" -maxdepth 4 -type f | sort
+            exit 1
+          fi
+
+          echo "Fichiers Android trouvés."
+
+      - name: Activer AndroidX
+        shell: bash
+        run: |
+          set -e
+
+          touch "$PROJECT_DIR/gradle.properties"
+
+          grep -q '^android.useAndroidX=true' \
+            "$PROJECT_DIR/gradle.properties" || \
+            echo 'android.useAndroidX=true' >> "$PROJECT_DIR/gradle.properties"
+
+          grep -q '^android.enableJetifier=true' \
+            "$PROJECT_DIR/gradle.properties" || \
+            echo 'android.enableJetifier=true' >> "$PROJECT_DIR/gradle.properties"
+
+          echo "AndroidX activé."
+
+      - name: Vérifier Navigation SDK
+        shell: bash
+        run: |
+          set -e
+
+          GRADLE_FILE="$PROJECT_DIR/app/build.gradle"
+
+          if [ ! -f "$GRADLE_FILE" ]; then
+            GRADLE_FILE="$PROJECT_DIR/app/build.gradle.kts"
+          fi
+
+          echo "Fichier Gradle : $GRADLE_FILE"
+
+          grep -q "com.google.android.libraries.navigation:navigation" "$GRADLE_FILE"
+
+          if grep -q "play-services-maps" "$GRADLE_FILE"; then
+            echo "ERREUR : play-services-maps ne doit pas être utilisé directement."
+            exit 1
+          fi
+
+          echo "Navigation SDK détecté."
+
+      - name: Injecter la clé Google Maps
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERREUR : AndroidManifest.xml introuvable."
+            exit 1
+          fi
+
+          python3 - "$MANIFEST" "$MAPS_API_KEY" <<'PY'
+          import sys
+          from pathlib import Path
+
+          manifest = Path(sys.argv[1])
+          key = sys.argv[2]
+
+          text = manifest.read_text(encoding="utf-8")
+
+          text = text.replace("${MAPS_API_KEY}", key)
+          text = text.replace("${GOOGLE_MAPS_API_KEY}", key)
+
+          manifest.write_text(text, encoding="utf-8")
+
+          print("Clé Google Maps injectée.")
+          PY
+
+      - name: Vérifier Android Auto
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+
+          DESC=$(find "$PROJECT_DIR" \
+            -type f \
+            -name "automotive_app_desc.xml" \
+            -print -quit)
+
+          if [ -z "$DESC" ]; then
+            echo "ERREUR : automotive_app_desc.xml introuvable."
+            exit 1
+          fi
+
+          grep -q "androidx.car.app.category.NAVIGATION" "$MANIFEST"
+          grep -q "com.google.android.gms.car.application" "$MANIFEST"
+
+          echo "Android Auto détecté."
+
+      - name: Construire APK debug
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -e
+
           gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Vérifier APK
         shell: bash
         run: |
           set -e
-          APK=$(find app/build/outputs/apk/debug -type f -name "*.apk" -print -quit)
-          test -n "$APK"
+
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
+            -type f \
+            -name "*.apk" \
+            -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERREUR : APK introuvable."
+            exit 1
+          fi
+
           echo "APK généré : $APK"
+
           keytool -printcert -jarfile "$APK" || true
 
       - name: Publier APK
         uses: actions/upload-artifact@v4
         with:
           name: NicoGPS-Navigation-7.9-AndroidAuto
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
