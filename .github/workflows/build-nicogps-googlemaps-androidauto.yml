@@ -1,4 +1,4 @@
-name: Construire NicoGPS 7.9 Google Navigation Android Auto
+name: Construire NicoGPS 7.9 Navigation Google Android Auto FIX2
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+      GOOGLE_MAPS_API_KEY: "${{ secrets.GOOGLE_MAPS_API_KEY }}"
 
     steps:
       - name: Récupérer le dépôt
@@ -22,55 +22,72 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Installer Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          gradle-version: "8.13"
 
       - name: Vérifier la clé Google Maps
-        shell: bash
         run: |
           if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
-            echo "ERREUR : le secret GOOGLE_MAPS_API_KEY est absent."
+            echo "ERREUR : secret GOOGLE_MAPS_API_KEY absent."
             exit 1
           fi
           echo "Clé Google Maps détectée."
 
-      - name: Extraire la source NicoGPS complète
-        id: project
+      - name: Trouver la source NicoGPS FIX1
+        id: source
         shell: bash
         run: |
-          SOURCE_ZIP=$(find . -maxdepth 3 -type f -name 'NicoGPS_FULL_7.9_GOOGLE_NAVIGATION_ANDROID_AUTO.zip' -print -quit)
-          if [ -z "$SOURCE_ZIP" ]; then
-            echo "ERREUR : ZIP source NicoGPS introuvable."
-            echo "Fichier attendu : NicoGPS_FULL_7.9_GOOGLE_NAVIGATION_ANDROID_AUTO.zip"
+          ZIP=$(find . -maxdepth 3 -type f -name 'NicoGPS_FULL_7.9_GOOGLE_NAVIGATION_ANDROID_AUTO_FIX1.zip' -print -quit)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : ZIP FIX1 introuvable."
+            find . -maxdepth 3 -type f -name '*.zip' -print
             exit 1
           fi
+
+          echo "Source : $ZIP"
+
           rm -rf build-source
-          mkdir -p build-source
-          unzip -q "$SOURCE_ZIP" -d build-source
-          test -f build-source/settings.gradle
+          mkdir build-source
+
+          unzip -q "$ZIP" -d build-source
+
           echo "project_dir=build-source" >> "$GITHUB_OUTPUT"
-          echo "Source extraite dans build-source."
 
-      - name: Vérifier la configuration Navigation SDK
+      - name: Vérifier et nettoyer gradle.properties
         working-directory: build-source
-        shell: bash
         run: |
-          grep -q 'com.google.android.libraries.navigation:navigation:' app/build.gradle
-          grep -q 'navSdkVersion = "7.9.0"' app/build.gradle
-          grep -q 'compileSdk 36' app/build.gradle
-          grep -q 'targetSdk 36' app/build.gradle
-          grep -q 'android.useDeprecatedNdk=true' gradle.properties
-          if grep -q 'play-services-maps' app/build.gradle; then
-            echo "ERREUR : play-services-maps ne doit pas être déclaré directement."
-            exit 1
-          fi
-          echo "Configuration Navigation SDK 7.9.0 OK."
+          touch gradle.properties
 
-      - name: Injecter la clé API dans le manifeste
+          sed -i '/^[[:space:]]*android\.useDeprecatedNdk[[:space:]]*=/d' gradle.properties
+
+          grep -q '^android.useAndroidX=true' gradle.properties || \
+            echo 'android.useAndroidX=true' >> gradle.properties
+
+          grep -q '^android.enableJetifier=true' gradle.properties || \
+            echo 'android.enableJetifier=true' >> gradle.properties
+
+          echo '--- gradle.properties ---'
+          cat gradle.properties
+
+      - name: Vérifier Navigation SDK
+        working-directory: build-source
+        run: |
+          grep -q 'navSdkVersion = "7.9.0"' app/build.gradle
+
+          grep -q 'com.google.android.libraries.navigation:navigation:' app/build.gradle
+
+          ! grep -q 'android.useDeprecatedNdk' gradle.properties
+
+          ! grep -q 'play-services-maps' app/build.gradle
+
+          echo "Navigation SDK 7.9.0 détecté."
+
+      - name: Injecter la clé Google Maps
         working-directory: build-source
         shell: bash
         run: |
@@ -79,29 +96,36 @@ jobs:
           import os
 
           p = Path('app/src/main/AndroidManifest.xml')
+
           s = p.read_text(encoding='utf-8')
+
           key = os.environ['GOOGLE_MAPS_API_KEY']
 
-          if '${MAPS_API_KEY}' not in s:
-              raise SystemExit('ERREUR : placeholder MAPS_API_KEY absent du manifeste.')
+          s = s.replace('${MAPS_API_KEY}', key)
 
-          p.write_text(s.replace('${MAPS_API_KEY}', key), encoding='utf-8')
+          p.write_text(s, encoding='utf-8')
+
           print('Clé Google Maps injectée.')
           PY
 
       - name: Vérifier Android Auto
         working-directory: build-source
-        shell: bash
         run: |
           test -f app/src/main/res/xml/automotive_app_desc.xml
-          grep -q 'androidx.car.app.category.NAVIGATION' app/src/main/AndroidManifest.xml
-          grep -q 'com.google.android.gms.car.application' app/src/main/AndroidManifest.xml
-          grep -q 'NavigationViewForAuto' app/src/main/java/com/nicogps/app/NicoGPSCarService.java
-          echo "Configuration Android Auto détectée."
+
+          grep -q 'androidx.car.app.category.NAVIGATION' \
+            app/src/main/AndroidManifest.xml
+
+          grep -q 'com.google.android.gms.car.application' \
+            app/src/main/AndroidManifest.xml
+
+          grep -q 'NavigationViewForAuto' \
+            app/src/main/java/com/nicogps/app/NicoGPSCarService.java
+
+          echo "Android Auto détecté."
 
       - name: Construire APK debug
         working-directory: build-source
-        shell: bash
         run: |
           gradle --no-daemon --stacktrace :app:assembleDebug
 
@@ -109,17 +133,24 @@ jobs:
         working-directory: build-source
         shell: bash
         run: |
-          APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)
+          APK=$(find app/build/outputs/apk/debug \
+            -type f \
+            -name '*.apk' \
+            -print -quit)
+
           if [ -z "$APK" ]; then
-            echo "ERREUR : APK non trouvé."
+            echo "ERREUR : APK introuvable."
             exit 1
           fi
+
           echo "APK : $APK"
-          keytool -printcert -jarfile "$APK" | grep -E 'Owner:|SHA1:|SHA256:' || true
+
+          keytool -printcert -jarfile "$APK" \
+            | grep -E 'Owner:|SHA1:|SHA256:' || true
 
       - name: Publier APK
         uses: actions/upload-artifact@v4
         with:
-          name: NicoGPS-7.9-GoogleNavigation-AndroidAuto
+          name: NicoGPS-7.9-Navigation-AndroidAuto-FIX2
           path: build-source/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
